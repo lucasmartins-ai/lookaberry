@@ -10,6 +10,7 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   ANTHROPIC_API_KEY: z.string().optional().default(''),
+  ANTHROPIC_MODEL: z.string().default('claude-3-5-haiku-latest'),
   OPENAI_API_KEY: z.string().optional().default(''),
   LOOKACRAWLER_URL: z.string().optional().default(''),
   JINA_API_KEY: z.string().optional().default(''),

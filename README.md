@@ -79,9 +79,9 @@ flowchart TB
 | **Sprint 1** | **Fundação do Core, Banco Vetorial e MCP Server Base** | `gtm_analyze_icp` | 🟢 **Operacional** |
 | **Sprint 2** | Ingestão de Sinais de Intenção e Hybrid Scoring Engine | `gtm_detect_intent_signals`, `gtm_score_and_rank_leads` | 🟢 **Implementado e testado** |
 | **Sprint 3** | Waterfall Enrichment e Validação de Entregabilidade | `gtm_waterfall_enrich_lead` | 🟢 **Implementado e testado** |
-| **Sprint 4** | Motor de Hiper-Personalização com Prompt Caching | `gtm_generate_hyper_personalized_message` | ⚪ Planejado |
-| **Sprint 5** | Dispatcher Multicanal, Sequências e Anti-Ban Engine | `gtm_schedule_outreach_sequence` | ⚪ Planejado |
-| **Sprint 6** | Analytics, Loop de Feedback e Aprendizado Contínuo | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | ⚪ Planejado |
+| **Sprint 4** | Motor de Hiper-Personalização com Prompt Caching | `gtm_generate_hyper_personalized_message` | 🟢 **Implementado e testado** |
+| **Sprint 5** | Dispatcher Multicanal, Sequências e Anti-Ban Engine | `gtm_schedule_outreach_sequence` | 🟢 **Implementado e testado** |
+| **Sprint 6** | Analytics, Loop de Feedback e Aprendizado Contínuo | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | 🟢 Implementado e testado |
 
 ---
 
@@ -101,10 +101,13 @@ LookaBerry/
 │   ├── db/                  # Singleton Prisma e helpers pgvector para HNSW
 │   ├── core/
 │   │   ├── icp/             # Engine de Scraping (LookaCrawler), LLM Analyzer e Embeddings
+│   │   ├── intent/          # Ingestão e ranking de sinais
+│   │   ├── enrichment/      # Cascata de enriquecimento e validação
+│   │   ├── personalization/ # Mensagens contextualizadas e guardrails
 │   │   └── queues/          # Filas BullMQ e background workers
 │   ├── mcp/
 │   │   ├── server.ts        # Instanciação do McpServer
-│   │   ├── tools/           # Catálogo de ferramentas MCP (gtm_analyze_icp)
+│   │   ├── tools/           # Catálogo MCP de ICP, intent e enrichment
 │   │   ├── schemas/         # Schemas Zod de entrada e saída
 │   │   └── transports/      # Transportes stdio e SSE
 │   ├── api/
@@ -148,7 +151,13 @@ docker compose up -d
 npm run db:push
 ```
 
-### 6. Iniciar Servidor (REST API + MCP SSE)
+### 6. Popular Banco com Dados de Demonstração (Seed)
+```bash
+npm run db:seed
+```
+Popula perfis de ICP, empresas com embeddings vetoriais, sinais de intenção recentes e leads prontos para teste imediato.
+
+### 7. Iniciar Servidor (REST API + MCP SSE)
 ```bash
 npm run dev
 ```
@@ -158,12 +167,12 @@ npm run dev
 
 ---
 
-## 🔌 Conectando ao Servidor MCP
+## 🔌 Conectando a Qualquer Agente de IA (Cursor, Claude Code, Antigravity, OpenCode, Codex)
 
-### Opção A: Claude Code / Cursor / Codex (via stdio)
+O LookaBerry foi desenhado com arquitetura **AI-Native**, facilitando a conexão com qualquer agente com configuração zero:
 
-Adicione ao arquivo de configuração MCP do seu ambiente (`claude_desktop_config.json`, `~/.cursor/mcp.json` ou `.gemini/config/skills`):
-
+### Opção A: Cursor IDE (`.cursor/mcp.json`)
+O repositório já inclui `.cursor/mcp.json` pré-configurado integrando `lookaberry` e `lookacrawler`:
 ```json
 {
   "mcpServers": {
@@ -171,25 +180,62 @@ Adicione ao arquivo de configuração MCP do seu ambiente (`claude_desktop_confi
       "command": "npx",
       "args": ["-y", "tsx", "/Users/Master/LookaBerry/src/mcp/transports/stdio.ts"],
       "env": {
-        "DATABASE_URL": "postgresql://postgres:postgrespassword@127.0.0.1:5433/lookaberry?schema=public",
-        "REDIS_URL": "redis://localhost:6379",
-        "ANTHROPIC_API_KEY": "sua-chave-aqui",
-        "OPENAI_API_KEY": "sua-chave-aqui"
+        "DATABASE_URL": "postgresql://lookaberry:lookaberry_secret@localhost:5433/lookaberry?schema=public"
       }
+    },
+    "lookacrawler": {
+      "command": "bun",
+      "args": ["run", "/Users/Master/LOOKACRAWLER/index.ts"]
     }
   }
 }
 ```
 
-### Opção B: Agentes Remotos / Windsurf (via SSE)
+### Opção B: Claude Code / Antigravity / OpenCode / Codex (via stdio)
+Use o comando nativo ou adicione ao `mcp.json`:
+```bash
+claude mcp add lookaberry npx -y tsx /Users/Master/LookaBerry/src/mcp/transports/stdio.ts
+```
 
-Inicie o servidor com `npm run dev` e aponte seu cliente MCP para:
+### Opção C: Agentes Remotos via SSE (HTTP)
+Inicie o servidor com `npm run dev` e conecte o agente:
 - **SSE URL**: `http://localhost:3000/sse`
 - **Messages Endpoint**: `http://localhost:3000/messages`
 
 ---
 
-## 🛠️ Ferramentas MCP Ativas (Sprints 1–3)
+## 🛠️ Catálogo Completo de Ferramentas MCP (8 Tools)
+
+| Tool MCP | Finalidade | Sprint |
+| :--- | :--- | :---: |
+| `gtm_analyze_icp` | Extrai tese de valor via LookaCrawler e gera ICP com embeddings em pgvector | Sprint 1 |
+| `gtm_detect_intent_signals` | Ingestão e busca de sinais de intenção com pesos calibrados | Sprint 2 |
+| `gtm_score_and_rank_leads` | Algoritmo de ranking híbrido SQL (pgvector + sinais) com **zero tokens** | Sprint 2 |
+| `gtm_waterfall_enrich_lead` | Enriquecimento em cascata (Cache -> Apollo -> Dropcontact -> SMTP/ZeroBounce) | Sprint 3 |
+| `gtm_generate_hyper_personalized_message` | Síntese de mensagem B2B com Prompt Caching e guardrails anti-spam | Sprint 4 |
+| `gtm_schedule_outreach_sequence` | Agendamento multicanal com cotas diárias e salvaguardas anti-ban | Sprint 5 |
+| `gtm_track_campaign_metrics` | Agregação em tempo real de métricas e taxas de conversão de campanhas | Sprint 6 |
+| `gtm_record_lead_interaction_feedback` | Captura eventos/respostas, classifica sentimento e fecha o loop de aprendizado | Sprint 6 |
+
+### `gtm_schedule_outreach_sequence`
+Agenda uma cadência multicanal para leads existentes. A sequência deve conter pelo menos uma etapa LinkedIn e uma etapa Email; quotas esgotadas e pausas anti-ban bloqueiam a execução.
+
+#### Exemplo de Chamada:
+```json
+{
+  "campaign_id": "2256c89e-be74-45ff-a1d7-6dc81ce6de7a",
+  "lead_ids": ["2256c89e-be74-45ff-a1d7-6dc81ce6de7b"],
+  "steps": [
+    { "channel": "LINKEDIN_CONNECT", "delay_hours": 0, "prompt_template": "Connection request" },
+    { "channel": "LINKEDIN_MESSAGE", "delay_hours": 24, "prompt_template": "Contextual message" },
+    { "channel": "EMAIL", "delay_hours": 48, "prompt_template": "Email follow-up" }
+  ]
+}
+```
+
+CAPTCHA ou HTTP 429 em LinkedIn pausa a conta por 48 horas. Credenciais de provedores devem ficar somente em variáveis de ambiente.
+
+---
 
 ### `gtm_analyze_icp`
 Extrai a tese de valor de uma empresa a partir do seu website e gera o perfil do ICP com personas, dores agudas e embeddings vetoriais de 1536 dimensões indexados em HNSW.
@@ -227,6 +273,32 @@ Extrai a tese de valor de uma empresa a partir do seu website e gera o perfil do
   ]
 }
 ```
+
+### `gtm_track_campaign_metrics`
+Consulta métricas agregadas de uma campanha, com taxas de abertura, clique, resposta e bounce.
+
+```json
+{
+  "campaign_id": "2256c89e-be74-45ff-a1d7-6dc81ce6de7a",
+  "period_start": "2026-08-01T00:00:00.000Z",
+  "period_end": "2026-08-31T23:59:59.999Z"
+}
+```
+
+### `gtm_record_lead_interaction_feedback`
+Registra abertura, clique, resposta ou bounce. Replies sem sentimento explícito são classificados com Haiku; confiança inferior a 85% gera revisão humana, pausa a sequência e atualiza o sinal associado quando possível.
+
+```json
+{
+  "campaign_id": "2256c89e-be74-45ff-a1d7-6dc81ce6de7a",
+  "lead_id": "2256c89e-be74-45ff-a1d7-6dc81ce6de7b",
+  "message_id": "2256c89e-be74-45ff-a1d7-6dc81ce6de7c",
+  "interaction_type": "REPLY",
+  "content": "Tenho interesse. Podemos conversar na próxima semana?"
+}
+```
+
+Webhooks de provedores devem ser normalizados para `POST /api/v1/webhooks/outreach` com `campaign_id`, `lead_id`, `event` e, quando disponível, `message_id` e `content`.
 
 ---
 

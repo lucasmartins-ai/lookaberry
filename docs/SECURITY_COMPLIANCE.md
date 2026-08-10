@@ -48,3 +48,8 @@ flowchart LR
 
 ### 3.3. Endpoint de Direito ao Esquecimento (`/v1/leads/{id}/anonymize`)
 - Sob demanda do titular ou do operador, o endpoint anonimiza todos os dados pessoais do lead, substituindo-os por hashes SHA-256 irreversíveis para preservar a integridade das métricas agregadas de campanhas sem armazenar PII (Personally Identifiable Information).
+
+### 3.4. Webhooks de Outreach (Sprint 6)
+- O endpoint normalizado `POST /api/v1/webhooks/outreach` deve ficar atrás do gateway interno ou de autenticação de assinatura do provedor antes de exposição pública.
+- O contrato atual não valida assinaturas nativas de Smartlead, Resend ou Unipile; adaptadores de produção devem verificar assinatura, timestamp/nonce e prevenir reentrega antes de encaminhar o evento normalizado.
+- O conteúdo de respostas é armazenado em `lead_interaction_feedback`; aplicar retenção compatível com a política de privacidade e evitar registrar tokens, credenciais ou payloads desnecessários.

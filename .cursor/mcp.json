@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "lookaberry": {
+      "command": "npx",
+      "args": ["-y", "tsx", "/Users/Master/LookaBerry/src/mcp/transports/stdio.ts"],
+      "env": {
+        "DATABASE_URL": "postgresql://lookaberry:lookaberry_secret@localhost:5433/lookaberry?schema=public",
+        "NODE_ENV": "development"
+      }
+    },
+    "lookacrawler": {
+      "command": "bun",
+      "args": ["run", "/Users/Master/LOOKACRAWLER/index.ts"],
+      "env": {
+        "NODE_ENV": "development"
+      }
+    }
+  }
+}

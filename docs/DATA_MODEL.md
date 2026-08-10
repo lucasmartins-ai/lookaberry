@@ -187,6 +187,37 @@ CREATE INDEX idx_leads_priority ON leads(total_priority_score DESC);
 CREATE INDEX idx_intent_signals_company_active ON intent_signals(company_id, is_active);
 CREATE INDEX idx_outreach_messages_lead ON outreach_messages(lead_id);
 
+-- ============================================================================
+-- 10. Analytics e Feedback Loop (Sprint 6)
+-- ============================================================================
+CREATE TABLE campaign_metrics (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    metric_date DATE NOT NULL,
+    sent_count INT NOT NULL DEFAULT 0,
+    open_count INT NOT NULL DEFAULT 0,
+    click_count INT NOT NULL DEFAULT 0,
+    reply_count INT NOT NULL DEFAULT 0,
+    bounce_count INT NOT NULL DEFAULT 0,
+    positive_replies INT NOT NULL DEFAULT 0,
+    negative_replies INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE TABLE lead_interaction_feedback (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    message_id UUID REFERENCES outreach_messages(id) ON DELETE SET NULL,
+    interaction_type VARCHAR(20) NOT NULL, -- OPEN, CLICK, REPLY, BOUNCE
+    sentiment VARCHAR(20), -- POSITIVE, NEGATIVE, NEUTRAL, AMBIGUOUS
+    confidence NUMERIC(5,2),
+    requires_human_review BOOLEAN NOT NULL DEFAULT FALSE,
+    content TEXT,
+    provider VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 -- Índices HNSW para busca vetorial de cosseno de alta performance
 CREATE INDEX idx_icp_profiles_embedding ON icp_profiles USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_companies_embedding ON companies USING hnsw (embedding vector_cosine_ops);

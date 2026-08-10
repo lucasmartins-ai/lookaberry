@@ -4,6 +4,7 @@ import { setupSwagger } from './plugins/swagger.js';
 import { healthRoutes } from './routes/health.js';
 import { icpRoutes } from './routes/icp.js';
 import { mcpSseRoutes } from './routes/mcpSse.js';
+import { webhookRoutes } from './routes/webhooks.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = fastify({
@@ -20,6 +21,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(icpRoutes);
   await app.register(mcpSseRoutes);
+  await app.register(webhookRoutes);
 
   return app;
 }

@@ -4,3 +4,4 @@ export * from '../core/icp/scraper.js';
 export * from '../core/icp/service.js';
 export * from '../mcp/schemas/intent.js';
 export * from '../core/intent/service.js';
+export * from '../core/enrichment/service.js';

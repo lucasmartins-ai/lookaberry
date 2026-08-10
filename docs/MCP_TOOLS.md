@@ -145,7 +145,7 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ### Tool 4: `gtm_waterfall_enrich_lead`
 - `[STATUS: ✅ OPERACIONAL]`
-- **Descrição**: Executa o enriquecimento em cascata (Cache Local -> Provedores Tier 1/2 -> Validação SMTP ZeroBounce) para obter dados válidos.
+- **Descrição**: Executa o enriquecimento em cascata (Cache Local -> Apollo -> Dropcontact -> MX/ZeroBounce) para obter dados válidos.
 - **Quando usar**: Quando um lead pontuado com alto score precisa de e-mail verificado antes do outreach.
 - **Otimização de tokens**: Processo puramente programático e assíncrono.
 
@@ -184,10 +184,11 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 - O worker BullMQ `waterfall_enrichment_queue` executa até 5 jobs em concorrência, 10 jobs por segundo, com 3 tentativas e backoff exponencial de 1 segundo.
 - A validação padrão faz preflight MX. A integração ZeroBounce autenticada permanece um ponto de configuração para produção.
 
-### Tool 5: `gtm_generate_hyper_personalized_message`
+### Tool 5: `gtm_generate_hyper_personalized_message` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Gera o hook e o corpo da mensagem combinando de forma cirúrgica o lead, seu cargo, o sinal ativo e a dor do ICP.
 - **Quando usar**: Imediatamente antes de disparar uma mensagem ou conexão personalizada.
-- **Otimização de tokens**: Prompt Caching no system prompt. Apenas o payload condensado do lead (~150 tokens) é enviado no input dinâmico.
+- **Otimização de tokens**: Prompt Caching no system prompt via `cache_control: ephemeral`. Apenas o payload condensado do lead e do sinal são enviados no input dinâmico.
+- **Guardrails**: rejeita termos genéricos/spam, ausência de sinal ativo e mensagens que excedam o limite do canal.
 
 ```json
 // Input Schema
@@ -216,10 +217,11 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ---
 
-### Tool 6: `gtm_schedule_outreach_sequence`
-- **Descrição**: Agenda o envio das mensagens da sequência respeitando cotas de envio diárias e delays com jitter humano.
-- **Quando usar**: Para enfileirar mensagens geradas e aprovadas pelo agente.
+### Tool 6: `gtm_schedule_outreach_sequence` `[STATUS: ✅ OPERACIONAL]`
+- **Descrição**: Agenda uma cadência multicanal por lote de leads, persistindo a máquina de estados e a próxima etapa.
+- **Quando usar**: Depois do enriquecimento e da aprovação das mensagens pelo agente.
 - **Otimização de tokens**: Operação transacional de banco e fila (0 tokens de LLM).
+- **Guardrails**: exige pelo menos uma etapa LinkedIn e uma etapa Email, aceita de 2 a 12 etapas e até 1.000 leads. Quotas esgotadas e contas pausadas bloqueiam disparos; CAPTCHA/429 pausa LinkedIn por 48 horas.
 
 ```json
 // Input Schema
@@ -227,38 +229,45 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
   "type": "object",
   "properties": {
     "campaign_id": { "type": "string", "format": "uuid" },
-    "lead_id": { "type": "string", "format": "uuid" },
-    "pre_generated_messages": {
+    "lead_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "minItems": 1,
+      "maxItems": 1000
+    },
+    "steps": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "step_order": { "type": "integer" },
           "channel": { "type": "string", "enum": ["LINKEDIN_CONNECT", "LINKEDIN_MESSAGE", "EMAIL"] },
-          "subject": { "type": "string" },
-          "body": { "type": "string" }
+          "delay_hours": { "type": "integer", "minimum": 0, "maximum": 720 },
+          "prompt_template": { "type": "string" }
         },
-        "required": ["step_order", "channel", "body"]
+        "required": ["channel", "delay_hours", "prompt_template"]
       }
-    }
+    },
+    "start_at": { "type": "string", "format": "date-time" }
   },
-  "required": ["campaign_id", "lead_id"]
+  "required": ["campaign_id", "lead_ids", "steps"]
 }
 
 // Output Schema
 {
   "type": "object",
   "properties": {
-    "status": { "type": "string", "enum": ["SCHEDULED", "QUEUED", "REJECTED_DAILY_LIMIT"] },
-    "first_execution_at": { "type": "string", "format": "date-time" },
-    "steps_count": { "type": "integer" }
+    "sequence_id": { "type": "string" },
+    "status": { "type": "string", "enum": ["ACTIVE", "PAUSED", "COMPLETED"] },
+    "next_step": { "type": "integer" },
+    "lead_count": { "type": "integer" },
+    "next_run_at": { "type": "string", "format": "date-time" }
   }
 }
 ```
 
 ---
 
-### Tool 7: `gtm_track_campaign_metrics`
+### Tool 7: `gtm_track_campaign_metrics` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Retorna métricas consolidadas em tempo real (envios, opens, replies, taxa de resposta positiva e bounces).
 - **Quando usar**: Em rotinas de auditoria e monitoramento de campanhas.
 - **Otimização de tokens**: Agregações SQL pré-computadas em memória ou visualizações de banco (0 tokens de LLM).
@@ -269,7 +278,8 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
   "type": "object",
   "properties": {
     "campaign_id": { "type": "string", "format": "uuid" },
-    "timeframe": { "type": "string", "enum": ["24H", "7D", "30D", "ALL"], "default": "7D" }
+    "period_start": { "type": "string", "format": "date-time" },
+    "period_end": { "type": "string", "format": "date-time" }
   },
   "required": ["campaign_id"]
 }
@@ -278,21 +288,25 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 {
   "type": "object",
   "properties": {
-    "sent_count": { "type": "integer" },
-    "delivered_count": { "type": "integer" },
-    "open_rate_pct": { "type": "number" },
-    "reply_rate_pct": { "type": "number" },
-    "positive_reply_count": { "type": "integer" },
-    "bounce_rate_pct": { "type": "number" },
-    "active_leads_in_pipeline": { "type": "integer" }
+    "sent": { "type": "integer" },
+    "opens": { "type": "integer" },
+    "clicks": { "type": "integer" },
+    "replies": { "type": "integer" },
+    "bounces": { "type": "integer" },
+    "positive_replies": { "type": "integer" },
+    "negative_replies": { "type": "integer" },
+    "open_rate": { "type": "number" },
+    "click_rate": { "type": "number" },
+    "reply_rate": { "type": "number" },
+    "bounce_rate": { "type": "number" }
   }
 }
 ```
 
 ---
 
-### Tool 8: `gtm_record_lead_interaction_feedback`
-- **Descrição**: Processa a resposta recebida de um prospect, classifica o sentimento e retroalimenta o peso do sinal de intenção associado.
+### Tool 8: `gtm_record_lead_interaction_feedback` `[STATUS: ✅ OPERACIONAL]`
+- **Descrição**: Registra uma abertura, clique, resposta ou bounce; replies podem ser classificados pelo Haiku e retroalimentam o peso do sinal de intenção associado.
 - **Quando usar**: Quando o webhook de e-mail ou LinkedIn reporta uma resposta recebida.
 - **Otimização de tokens**: Classificação rápida via Haiku com schema booleano estruturado.
 
@@ -301,9 +315,13 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 {
   "type": "object",
   "properties": {
+    "campaign_id": { "type": "string", "format": "uuid" },
+    "lead_id": { "type": "string", "format": "uuid" },
     "message_id": { "type": "string", "format": "uuid" },
-    "reply_body": { "type": "string" },
-    "auto_classify": { "type": "boolean", "default": true }
+    "interaction_type": { "type": "string", "enum": ["OPEN", "CLICK", "REPLY", "BOUNCE"] },
+    "content": { "type": "string" },
+    "sentiment": { "type": "string", "enum": ["POSITIVE", "NEGATIVE", "NEUTRAL", "AMBIGUOUS"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 100 }
   },
   "required": ["message_id", "reply_body"]
 }
@@ -312,9 +330,8 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 {
   "type": "object",
   "properties": {
-    "sentiment": { "type": "string", "enum": ["POSITIVE", "OBJECTION", "NOT_INTERESTED", "OUT_OF_OFFICE", "UNSUBSCRIBE"] },
-    "action_taken": { "type": "string" },
-    "signal_weight_adjustment": { "type": "number" }
+    "feedbackId": { "type": "string" },
+    "requiresHumanReview": { "type": "boolean" }
   }
 }
 ```

@@ -51,7 +51,7 @@ flowchart TB
     subgraph ExternalProviders["Provedores Externos & Provedores de Dados"]
         Scraping["Web Scraping & Crawling (LookaCrawler / Jina Reader)"]
         Signals["Signal Sources (Job Boards, GitHub, LinkedIn, News)"]
-        Waterfall["Enrichment (Apollo -> Dropcontact -> Prospeo -> ZeroBounce)"]
+         Waterfall["Enrichment (Cache -> Apollo -> Dropcontact -> MX/ZeroBounce)"]
         LinkedInAPI["LinkedIn Execution (Unipile / Isolated Headless Puppeteer)"]
         MailboxAPI["Email Execution (Smartlead / Instantly / Resend)"]
     end
@@ -111,6 +111,7 @@ flowchart TB
 - Orquestrador de segurança com controle de limites diários e jitter estocástico para proteção de contas.
 
 ### 3.8. Analytics & Continuous Learning Loop (`src/core/analytics/`)
-- Captura de eventos via webhooks (abertura, clique, resposta).
-- Classificação de sentimento da resposta (Positivo, Objeção, Fora do Escritório, Descadastramento).
-- Ajuste dinâmico de pesos para retroalimentar o algoritmo de scoring.
+- Captura de eventos via `POST /api/v1/webhooks/outreach` (abertura, clique, resposta e bounce).
+- Agregação transacional em `campaign_metrics`, com taxas calculadas na consulta MCP.
+- Classificação de resposta via Haiku; resultados abaixo de 85% ficam marcados para revisão humana.
+- Resposta pausa sequências ativas, atualiza o status do lead e ajusta o peso do sinal associado em passos de 5 pontos, limitado entre 0 e 100.

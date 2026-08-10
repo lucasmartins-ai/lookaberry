@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LookaBerry & LookaCrawler Universal MCP Server Registry",
+  "description": "Plug-and-play MCP configuration for Claude Code, Cursor, Antigravity, OpenCode, Codex, and AI Agents",
+  "mcpServers": {
+    "lookaberry": {
+      "command": "npx",
+      "args": ["-y", "tsx", "src/mcp/transports/stdio.ts"],
+      "env": {
+        "DATABASE_URL": "postgresql://lookaberry:lookaberry_secret@localhost:5433/lookaberry?schema=public",
+        "NODE_ENV": "development"
+      },
+      "description": "Autonomous AI GTM Outbound Engine with pgvector hybrid lead ranking, waterfall enrichment, and multichannel outreach."
+    },
+    "lookaberry-sse": {
+      "url": "http://localhost:3001/sse",
+      "transport": "sse",
+      "description": "LookaBerry MCP Server running over SSE (Server-Sent Events) via Fastify HTTP Server."
+    },
+    "lookacrawler": {
+      "command": "bun",
+      "args": ["run", "../LOOKACRAWLER/index.ts"],
+      "description": "Token-optimized web crawler & LLM extraction engine with noise pruning and Playwright/fast modes."
+    },
+    "lookacrawler-sse": {
+      "url": "http://localhost:3000/sse",
+      "transport": "sse",
+      "description": "LookaCrawler MCP Server running over SSE transport on port 3000."
+    }
+  }
+}

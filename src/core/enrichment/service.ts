@@ -1,5 +1,7 @@
 import { resolveMx } from 'node:dns/promises';
+import axios from 'axios';
 import { prisma } from '../../db/client.js';
+import { config } from '../../config/env.js';
 import type { WaterfallEnrichLeadInput, WaterfallEnrichLeadOutput } from '../../mcp/schemas/enrichment.js';
 
 export type EmailStatus = 'VERIFIED' | 'RISKY' | 'INVALID' | 'NOT_FOUND';
@@ -41,7 +43,7 @@ interface EnrichmentRepository {
   updateLead(id: string, result: { email?: string; emailStatus: EmailStatus; linkedinUrl?: string; phone?: string }): Promise<void>;
 }
 
-const defaultVerifier: EmailVerifier = {
+const mxVerifier: EmailVerifier = {
   async verify(email) {
     const domain = email.split('@')[1];
     if (!domain) return 'INVALID';
@@ -54,13 +56,46 @@ const defaultVerifier: EmailVerifier = {
   },
 };
 
-const unavailableProvider = (name: string): EnrichmentProvider => ({
-  name,
-  credits: 0,
-  async enrich() {
-    return null;
+const apolloProvider: EnrichmentProvider = {
+  name: 'APOLLO',
+  credits: 1,
+  async enrich(lead) {
+    if (!config.APOLLO_API_KEY) return null;
+    const response = await axios.post('https://api.apollo.io/api/v1/people/match', {
+      first_name: lead.firstName,
+      last_name: lead.lastName,
+      organization_domain: lead.companyDomain,
+      person_titles: lead.title ? [lead.title] : undefined,
+    }, { headers: { 'x-api-key': config.APOLLO_API_KEY } });
+    const person = response.data?.person;
+    return person ? { email: person.email, linkedin_url: person.linkedin_url, phone: person.phone_numbers?.[0]?.sanitized_number, raw_payload: { id: person.id, email: person.email } } : null;
   },
-});
+};
+
+const dropcontactProvider: EnrichmentProvider = {
+  name: 'DROPCONTACT',
+  credits: 1,
+  async enrich(lead) {
+    if (!config.DROPCONTACT_API_KEY) return null;
+    const response = await axios.post('https://api.dropcontact.com/batch', {
+      data: [{ first_name: lead.firstName, last_name: lead.lastName, email: lead.email, company: lead.companyDomain, job: lead.title }],
+    }, { headers: { 'X-Access-Token': config.DROPCONTACT_API_KEY } });
+    const contact = response.data?.data?.[0];
+    return contact ? { email: contact.email, linkedin_url: contact.linkedin, phone: contact.phone, raw_payload: { success: response.data?.success } } : null;
+  },
+};
+
+const unavailableProvider = (name: string): EnrichmentProvider => ({ name, credits: 0, async enrich() { return null; } });
+
+const defaultVerifier: EmailVerifier = config.ZEROBOUNCE_API_KEY ? {
+  async verify(email) {
+    const response = await axios.get('https://api.zerobounce.net/v2/validate', { params: { api_key: config.ZEROBOUNCE_API_KEY, email } });
+    const status = String(response.data?.status ?? '').toLowerCase();
+    if (status === 'valid') return 'VERIFIED';
+    if (status === 'invalid') return 'INVALID';
+    return 'RISKY';
+  },
+} : mxVerifier;
 
 const prismaRepository: EnrichmentRepository = {
   async getLead(id) {
@@ -101,7 +136,7 @@ export class WaterfallEnrichmentService {
       saveResult: dependencies.saveResult ?? prismaRepository.saveResult,
       updateLead: dependencies.updateLead ?? prismaRepository.updateLead,
     };
-    this.providers = dependencies.providers ?? [unavailableProvider('APOLLO'), unavailableProvider('DROPCONTACT')];
+    this.providers = dependencies.providers ?? [config.APOLLO_API_KEY ? apolloProvider : unavailableProvider('APOLLO'), config.DROPCONTACT_API_KEY ? dropcontactProvider : unavailableProvider('DROPCONTACT')];
     this.verifier = dependencies.verifier ?? defaultVerifier;
   }
 

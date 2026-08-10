@@ -55,6 +55,32 @@ enum MessageStatus {
   @@map("message_status_enum")
 }
 
+enum OutreachSequenceStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+
+  @@map("outreach_sequence_status_enum")
+}
+
+enum InteractionType {
+  OPEN
+  CLICK
+  REPLY
+  BOUNCE
+
+  @@map("interaction_type_enum")
+}
+
+enum FeedbackSentiment {
+  POSITIVE
+  NEGATIVE
+  NEUTRAL
+  AMBIGUOUS
+
+  @@map("feedback_sentiment_enum")
+}
+
 model IcpProfile {
   id                 String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   name               String       @db.VarChar(255)
@@ -160,6 +186,8 @@ model Lead {
   company            Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   enrichmentLogs     EnrichmentLog[]
   outreachMessages   OutreachMessage[]
+  outreachSequences  OutreachSequence[]
+  interactionFeedback LeadInteractionFeedback[]
 
   @@index([companyId], map: "idx_leads_company_id")
   @@index([status], map: "idx_leads_status")
@@ -195,6 +223,9 @@ model Campaign {
   icpProfile          IcpProfile         @relation(fields: [icpId], references: [id], onDelete: Cascade)
   steps               SequenceStep[]
   messages            OutreachMessage[]
+  sequences           OutreachSequence[]
+  metrics             CampaignMetric[]
+  interactionFeedback LeadInteractionFeedback[]
 
   @@map("campaigns")
 }
@@ -202,6 +233,7 @@ model Campaign {
 model SequenceStep {
   id              String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   campaignId      String             @map("campaign_id") @db.Uuid
+  sequenceId      String?            @map("sequence_id") @db.Uuid
   stepOrder       Int                @map("step_order")
   channel         ChannelType
   delayHours      Int                @default(24) @map("delay_hours")
@@ -209,9 +241,45 @@ model SequenceStep {
   createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
 
   campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  sequence        OutreachSequence?  @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
   messages        OutreachMessage[]
 
   @@map("sequence_steps")
+}
+
+model OutreachSequence {
+  id          String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId  String                 @map("campaign_id") @db.Uuid
+  status      OutreachSequenceStatus @default(ACTIVE)
+  nextStep    Int                    @default(0) @map("next_step")
+  nextRunAt   DateTime               @map("next_run_at") @db.Timestamptz(6)
+  pausedUntil DateTime?              @map("paused_until") @db.Timestamptz(6)
+  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  campaign    Campaign               @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leads       Lead[]
+  steps       SequenceStep[]
+
+  @@index([status, nextRunAt], map: "idx_outreach_sequences_due")
+  @@map("outreach_sequences")
+}
+
+model OutreachAccount {
+  id           String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  provider     String      @db.VarChar(50)
+  externalId   String      @map("external_id") @db.VarChar(255)
+  channel      ChannelType
+  dailyLimit   Int         @map("daily_limit")
+  sentToday    Int         @default(0) @map("sent_today")
+  quotaDate    DateTime    @map("quota_date") @db.Date
+  pausedUntil  DateTime?   @map("paused_until") @db.Timestamptz(6)
+  sessionKey   String?     @map("session_key") @db.VarChar(255)
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([provider, externalId, channel], map: "uq_outreach_account_provider_external_channel")
+  @@map("outreach_accounts")
 }
 
 model OutreachMessage {
@@ -235,7 +303,50 @@ model OutreachMessage {
   lead               Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
   step               SequenceStep       @relation(fields: [stepId], references: [id], onDelete: Cascade)
   signal             IntentSignal?      @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  interactionFeedback LeadInteractionFeedback[]
 
   @@index([leadId], map: "idx_outreach_messages_lead")
   @@map("outreach_messages")
+}
+
+model CampaignMetric {
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  metricDate       DateTime @map("metric_date") @db.Date
+  sentCount        Int      @default(0) @map("sent_count")
+  openCount        Int      @default(0) @map("open_count")
+  clickCount       Int      @default(0) @map("click_count")
+  replyCount       Int      @default(0) @map("reply_count")
+  bounceCount      Int      @default(0) @map("bounce_count")
+  positiveReplies  Int      @default(0) @map("positive_replies")
+  negativeReplies  Int      @default(0) @map("negative_replies")
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  campaign         Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, metricDate], map: "uq_campaign_metrics_campaign_date")
+  @@index([campaignId, metricDate], map: "idx_campaign_metrics_campaign_date")
+  @@map("campaign_metrics")
+}
+
+model LeadInteractionFeedback {
+  id                String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId        String            @map("campaign_id") @db.Uuid
+  leadId            String            @map("lead_id") @db.Uuid
+  messageId         String?           @map("message_id") @db.Uuid
+  interactionType   InteractionType   @map("interaction_type")
+  sentiment         FeedbackSentiment?
+  confidence        Decimal?          @db.Decimal(5, 2)
+  requiresHumanReview Boolean         @default(false) @map("requires_human_review")
+  content           String?           @db.Text
+  provider          String?           @db.VarChar(100)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  campaign          Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead              Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  message           OutreachMessage?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, createdAt], map: "idx_feedback_campaign_created")
+  @@index([leadId, createdAt], map: "idx_feedback_lead_created")
+  @@map("lead_interaction_feedback")
 }
