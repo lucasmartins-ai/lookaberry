@@ -1,0 +1,241 @@
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, uuidOssp(map: "uuid-ossp")]
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+enum EmailStatus {
+  UNVERIFIED
+  VERIFIED
+  RISKY
+  INVALID
+  NOT_FOUND
+
+  @@map("email_status_enum")
+}
+
+enum LeadStatus {
+  DISCOVERED
+  ENRICHED
+  READY
+  IN_SEQUENCE
+  ENGAGED
+  REPLIED_POSITIVE
+  REPLIED_NEGATIVE
+  UNSUBSCRIBED
+  BOUNCED
+
+  @@map("lead_status_enum")
+}
+
+enum ChannelType {
+  LINKEDIN_CONNECT
+  LINKEDIN_MESSAGE
+  EMAIL
+  MANUAL_TASK
+
+  @@map("channel_enum")
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  REPLIED
+  FAILED
+  BOUNCED
+
+  @@map("message_status_enum")
+}
+
+model IcpProfile {
+  id                 String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name               String       @db.VarChar(255)
+  websiteUrl         String?      @map("website_url") @db.VarChar(500)
+  description        String       @db.Text
+  targetIndustries   String[]     @default([]) @map("target_industries")
+  companySizeMin     Int?         @default(1) @map("company_size_min")
+  companySizeMax     Int?         @default(10000) @map("company_size_max")
+  targetGeos         String[]     @default([]) @map("target_geos")
+  techStackKeywords  String[]     @default([]) @map("tech_stack_keywords")
+  valuePropositions  Json         @default("[]") @map("value_propositions")
+  embedding          Unsupported("vector(1536)")?
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  personas           IcpPersona[]
+  campaigns          Campaign[]
+
+  @@map("icp_profiles")
+}
+
+model IcpPersona {
+  id               String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  icpId            String      @map("icp_id") @db.Uuid
+  jobTitles        String[]    @map("job_titles")
+  seniorityLevels  String[]    @map("seniority_levels")
+  responsibilities String?     @db.Text
+  priorityScore    Int         @default(10) @map("priority_score")
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  icpProfile       IcpProfile  @relation(fields: [icpId], references: [id], onDelete: Cascade)
+
+  @@map("icp_personas")
+}
+
+model Company {
+  id              String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  domain          String         @unique @db.VarChar(255)
+  name            String         @db.VarChar(255)
+  linkedinUrl     String?        @map("linkedin_url") @db.VarChar(500)
+  employeeCount   Int?           @map("employee_count")
+  industry        String?        @db.VarChar(255)
+  country         String?        @db.VarChar(100)
+  techStack       String[]       @default([]) @map("tech_stack")
+  description     String?        @db.Text
+  icpFitScore     Decimal?       @default(0.00) @map("icp_fit_score") @db.Decimal(5, 2)
+  embedding       Unsupported("vector(1536)")?
+  lastEnrichedAt  DateTime?      @map("last_enriched_at") @db.Timestamptz(6)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  signals         IntentSignal[]
+  leads           Lead[]
+  enrichmentLogs  EnrichmentLog[]
+
+  @@index([domain], map: "idx_companies_domain")
+  @@map("companies")
+}
+
+model IntentSignal {
+  id            String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  companyId     String             @map("company_id") @db.Uuid
+  signalType    String             @map("signal_type") @db.VarChar(100)
+  source        String             @db.VarChar(100)
+  title         String             @db.VarChar(500)
+  rawPayload    Json?              @default("{}") @map("raw_payload")
+  summary       String             @db.Text
+  intentWeight  Decimal            @default(50.00) @map("intent_weight") @db.Decimal(5, 2)
+  detectedAt    DateTime           @default(now()) @map("detected_at") @db.Timestamptz(6)
+  expiresAt     DateTime           @map("expires_at") @db.Timestamptz(6)
+  isActive      Boolean            @default(true) @map("is_active")
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company       Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  messages      OutreachMessage[]
+
+  @@index([companyId, isActive], map: "idx_intent_signals_company_active")
+  @@index([isActive, expiresAt, intentWeight(sort: Desc)], map: "idx_intent_signals_active_expiry_weight")
+  @@map("intent_signals")
+}
+
+model Lead {
+  id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  companyId          String             @map("company_id") @db.Uuid
+  firstName          String             @map("first_name") @db.VarChar(150)
+  lastName           String?            @map("last_name") @db.VarChar(150)
+  fullName           String             @map("full_name") @db.VarChar(300)
+  title              String             @db.VarChar(255)
+  seniority          String?            @db.VarChar(100)
+  linkedinUrl        String?            @map("linkedin_url") @db.VarChar(500)
+  email              String?            @db.VarChar(255)
+  emailStatus        EmailStatus        @default(UNVERIFIED) @map("email_status")
+  phone              String?            @db.VarChar(50)
+  location           String?            @db.VarChar(255)
+  icpScore           Decimal            @default(0.00) @map("icp_score") @db.Decimal(5, 2)
+  intentScore        Decimal            @default(0.00) @map("intent_score") @db.Decimal(5, 2)
+  totalPriorityScore Decimal?           @map("total_priority_score") @db.Decimal(5, 2)
+  status             LeadStatus         @default(DISCOVERED)
+  metadata           Json?              @default("{}")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company            Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  enrichmentLogs     EnrichmentLog[]
+  outreachMessages   OutreachMessage[]
+
+  @@index([companyId], map: "idx_leads_company_id")
+  @@index([status], map: "idx_leads_status")
+  @@index([totalPriorityScore(sort: Desc)], map: "idx_leads_priority")
+  @@map("leads")
+}
+
+model EnrichmentLog {
+  id               String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  leadId           String?   @map("lead_id") @db.Uuid
+  companyId        String?   @map("company_id") @db.Uuid
+  provider         String    @db.VarChar(100)
+  costCredits      Decimal?  @default(0.0000) @map("cost_credits") @db.Decimal(6, 4)
+  status           String    @db.VarChar(50)
+  responsePayload  Json?     @map("response_payload")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  lead             Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  company          Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@map("enrichment_logs")
+}
+
+model Campaign {
+  id                  String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  icpId               String             @map("icp_id") @db.Uuid
+  name                String             @db.VarChar(255)
+  isActive            Boolean            @default(true) @map("is_active")
+  dailyLimitLinkedin  Int                @default(20) @map("daily_limit_linkedin")
+  dailyLimitEmail     Int                @default(50) @map("daily_limit_email")
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  icpProfile          IcpProfile         @relation(fields: [icpId], references: [id], onDelete: Cascade)
+  steps               SequenceStep[]
+  messages            OutreachMessage[]
+
+  @@map("campaigns")
+}
+
+model SequenceStep {
+  id              String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId      String             @map("campaign_id") @db.Uuid
+  stepOrder       Int                @map("step_order")
+  channel         ChannelType
+  delayHours      Int                @default(24) @map("delay_hours")
+  promptTemplate  String             @map("prompt_template") @db.Text
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  messages        OutreachMessage[]
+
+  @@map("sequence_steps")
+}
+
+model OutreachMessage {
+  id                 String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId         String             @map("campaign_id") @db.Uuid
+  leadId             String             @map("lead_id") @db.Uuid
+  stepId             String             @map("step_id") @db.Uuid
+  signalId           String?            @map("signal_id") @db.Uuid
+  channel            ChannelType
+  subject            String?            @db.VarChar(500)
+  body               String             @db.Text
+  status             MessageStatus      @default(QUEUED)
+  externalMessageId  String?            @map("external_message_id") @db.VarChar(255)
+  errorReason        String?            @map("error_reason") @db.Text
+  sentAt             DateTime?          @map("sent_at") @db.Timestamptz(6)
+  repliedAt          DateTime?          @map("replied_at") @db.Timestamptz(6)
+  replySentiment     String?            @map("reply_sentiment") @db.VarChar(50)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  campaign           Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead               Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  step               SequenceStep       @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  signal             IntentSignal?      @relation(fields: [signalId], references: [id], onDelete: SetNull)
+
+  @@index([leadId], map: "idx_outreach_messages_lead")
+  @@map("outreach_messages")
+}
