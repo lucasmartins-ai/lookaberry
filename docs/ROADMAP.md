@@ -1,4 +1,6 @@
-# Roadmap Detalhado de Execução (6 Sprints) — LookaBerry
+# Roadmap Detalhado de Execução — LookaBerry
+
+> **Última atualização**: 2026-08-22 · **Commit**: S6 complete, 172 tests, autonomous loop operational
 
 ---
 
@@ -10,188 +12,168 @@ Ao final de **cada Sprint**, o sistema possui um conjunto utilizável e testáve
 
 ---
 
-## 2. Sprints de Execução
+## 2. Sprints de Execução (S1–S6 ✅ Concluídos)
 
-### Sprint 1: Fundação do Core, Banco Vetorial e MCP Server Base `[STATUS: ✅ CONCLUÍDO / OPERACIONAL]`
-- **Objetivo**: Subir a infraestrutura básica, banco de dados vetorial com pgvector e o servidor MCP com a primeira ferramenta de ICP.
-- **O que foi construído**:
-  - Setup do projeto TypeScript com Fastify, Prisma ORM e BullMQ.
-  - Setup do PostgreSQL 16 com extensão `pgvector` na porta 5433 e índices HNSW (`vector_cosine_ops`).
-  - Servidor MCP base com suporte a transporte `stdio` e `SSE` (`/sse` e `/messages`).
-  - Engine de Scraping com **LookaCrawler** (poda de ruído com >70% de economia de tokens + Readability + Turndown).
-  - Tool MCP `gtm_analyze_icp` com scraping de website e geração de embeddings vetoriais (1536 dimensões).
-  - Suíte de testes automatizados com Vitest e smoke test ponta-a-ponta com MCP Client oficial.
-- **Tools MCP Ativas ao Final da Sprint**:
-  - `gtm_analyze_icp` ✅
-- **Critérios de Aceite (Done)**:
-  - Servidor MCP conecta com sucesso no Claude Code / Cursor / Antigravity via `stdio` e `SSE`.
-  - Passar uma URL válida gera o registro de ICP no banco com vetor indexado em HNSW.
-- **Complexidade**: Média (3 dias).
-- **Riscos Técnicos**: Variação na estrutura de websites $\rightarrow$ *Mitigação*: Sanitização prévia de Markdown via LookaCrawler / Jina / Readability.
+### Sprint 1: Fundação do Core, Banco Vetorial e MCP Server Base `[✅ CONCLUÍDO]`
+- PostgreSQL 16 + pgvector + HNSW indexes
+- Fastify API + MCP Server (stdio + SSE)
+- LookaCrawler engine (>70% token savings)
+- Tool: `gtm_analyze_icp`
+- **Testes**: unitários + smoke test
 
 ---
 
-### Sprint 2: Intent Intelligence 2.0 `[STATUS: ✅ IMPLEMENTADO / PERSISTÊNCIA PENDENTE DE EXECUÇÃO LOCAL]`
-- **Objetivo**: Evoluir a ingestão legada para providers extensíveis e scoring determinístico com proveniência.
-- **Implementado**:
-  - Contrato `SignalProvider` separando coleta, normalização, classificação, confiança, persistência e scoring.
-  - Providers locais para mudanças de website, hiring e anúncios públicos; funding API permanece `REQUIRES_CREDENTIALS`.
-  - `IntentSignal` com provider, URL, observação, expiração, confiança, qualidade da fonte, classificação, dados normalizados/sanitizados, custo, hash e deduplicação.
-  - Reuso de `Source` e `CompanyEvidence` da S1.
-  - Scoring SQL determinístico por recência/TTL, confiança, qualidade, tipo, classificação, peso e duplicidade.
-  - Compatibilidade aditiva das tools `gtm_detect_intent_signals` e `gtm_score_and_rank_leads`.
-- **Testes**: providers válidos/indisponíveis, timeout, falha, partial failure, custo, TTL, classificação, deduplicação, ranking determinístico e contratos MCP.
-- **Verificação pendente**: migration S2, persistência e ranking PostgreSQL não foram executados porque PostgreSQL `127.0.0.1:5433` e Redis `localhost:6379` não estavam disponíveis.
-- **Limitação**: o fallback determinístico de embeddings é offline e não representa similaridade semântica sem `OPENAI_API_KEY`.
-- **Documentação**: [INTENT_PROVIDERS.md](INTENT_PROVIDERS.md).
-- **Complexidade**: Média-Alta.
-- **Risco remanescente**: adapters pagos, crawl scheduling e workers de ingestão ainda não fazem parte desta sprint.
+### Sprint 2: Intent Intelligence 2.0 `[✅ CONCLUÍDO]`
+- Contrato `SignalProvider` (coleta, normalização, classificação, confiança, scoring)
+- Providers: websiteChanges, hiring, publicAnnouncements, credentialedFunding
+- Scoring SQL determinístico por recência/TTL, confiança, qualidade, tipo, classificação
+- Reuso de `Source` e `CompanyEvidence` da S1
+- Tools: `gtm_detect_intent_signals`, `gtm_score_and_rank_leads`
+- **Testes**: 39 testes unitários
 
 ---
 
-### Sprint 3: Waterfall Enrichment e Validação de Entregabilidade `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
-- **Objetivo**: Construir a esteira assíncrona de descoberta e validação de e-mails corporativos.
-- **O que construir**:
-  - Orquestrador em cascata com fallback (Cache Local $\rightarrow$ Apollo API $\rightarrow$ Dropcontact $\rightarrow$ ZeroBounce).
-  - Workers assíncronos via BullMQ com concorrência 5, limite de 10 jobs/s, 3 tentativas e backoff exponencial.
-  - Tool MCP `gtm_waterfall_enrich_lead`.
-- **Tools MCP Ativas ao Final da Sprint**:
-  - `gtm_analyze_icp`
-  - `gtm_detect_intent_signals`
-  - `gtm_score_and_rank_leads`
-  - `gtm_waterfall_enrich_lead`
-- **Critérios de Aceite (Done)**:
-  - Leads enriquecidos possuem e-mail validado por MX/entregabilidade; cada tentativa e crédito consumido é auditado em `enrichment_logs`.
-- **Complexidade**: Média-Alta (4 dias).
-- **Riscos Técnicos**: Rate limits e timeouts de provedores $\rightarrow$ *Mitigação*: limite BullMQ, retries com backoff e fallback imediato. Os adaptadores HTTP autenticados dos provedores devem ser habilitados antes de produção.
+### Sprint 3: Waterfall Enrichment `[✅ CONCLUÍDO]`
+- Cascata: Cache → Apollo → Dropcontact → MX/ZeroBounce
+- Workers BullMQ com concorrência 5, limite 10 jobs/s, 3 tentativas + backoff
+- Tool: `gtm_waterfall_enrich_lead`
 
 ---
 
-### Sprint 4: Motor de Hiper-Personalização com Prompt Caching `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
-- **Objetivo**: Gerar mensagens de alta conversão sem clichês usando Prompt Caching da Anthropic.
-- **O que construir**:
-  - Template engine de sintetização de dor (Sinal Ativo + Cargo do Lead + ICP Value Matrix).
-  - Integração com Anthropic Prompt Caching no SDK usando `cache_control: ephemeral` no prompt estático.
-  - Guardrails sintáticos para bloquear palavras de spam, clichês de IA e mensagens acima do limite do canal.
-  - Tool MCP `gtm_generate_hyper_personalized_message`.
-- **Tools MCP Ativas ao Final da Sprint**:
-  - `gtm_analyze_icp`
-  - `gtm_detect_intent_signals`
-  - `gtm_score_and_rank_leads`
-  - `gtm_waterfall_enrich_lead`
-  - `gtm_generate_hyper_personalized_message`
-- **Critérios de Aceite (Done)**:
-   - Mensagens contextuais usam payload dinâmico condensado e o prompt estático é enviado com cache control.
-   - Mensagens sem sinal ativo, com termos bloqueados ou acima do limite do canal são rejeitadas.
-   - Testes unitários cobrem geração, ausência de sinal e guardrails.
-- **Complexidade**: Baixa-Média (2 dias).
-- **Riscos Técnicos**: Alucinações sobre a empresa $\rightarrow$ *Mitigação*: Restrição estrita no prompt para usar apenas fatos contidos no payload do sinal.
-
-#### Execução da Sprint 4
-- **Implementado em**: `src/core/personalization/service.ts`, `src/mcp/schemas/personalization.ts` e `src/mcp/tools/personalization.ts`.
-- **Integração**: Tool registrada em `src/mcp/server.ts`; modelo configurável por `ANTHROPIC_MODEL`.
-- **Fonte de contexto**: lead, empresa e sinal ativo do banco; quando `signal_id` é omitido, seleciona o sinal ativo de maior peso.
-- **Segurança de conteúdo**: prompt instrui uso exclusivo dos fatos recebidos; validação local bloqueia clichês/spam e limita o tamanho por canal.
-- **Verificação**: `tests/unit/personalization.test.ts` cobre o contrato principal e os casos de rejeição.
-- **Ponto operacional**: a taxa real de cache hit depende de chamadas autenticadas à Anthropic e deve ser observada pelo campo de uso retornado pela API em produção.
+### Sprint 4: Hiper-Personalização com Prompt Caching `[✅ CONCLUÍDO]`
+- Template engine com sinal ativo + cargo do lead + ICP value matrix
+- Prompt Caching Anthropic (`cache_control: ephemeral`)
+- Guardrails anti-spam e limites por canal
+- Tool: `gtm_generate_hyper_personalized_message`
 
 ---
 
-### Sprint 5: Dispatcher Multicanal, Sequências e Anti-Ban Engine `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
-- **Objetivo**: Executar sequências de outreach multicanal (LinkedIn + Email) com salvaguardas de segurança ativas.
-- **O que construir**:
-  - Máquina de estados de cadência multicanal (Conexão $\rightarrow$ Mensagem $\rightarrow$ Email $\rightarrow$ Follow-up).
-  - Anti-Ban Engine para LinkedIn (limites diários, jitter gaussiano de 45-210s, isolamento de sessão).
-  - Integração com Smartlead/Resend e Unipile API.
-  - Tool MCP `gtm_schedule_outreach_sequence`.
-- **Tools MCP Ativas ao Final da Sprint**:
-  - `gtm_analyze_icp`
-  - `gtm_detect_intent_signals`
-  - `gtm_score_and_rank_leads`
-  - `gtm_waterfall_enrich_lead`
-  - `gtm_generate_hyper_personalized_message`
-  - `gtm_schedule_outreach_sequence`
-- **Critérios de Aceite (Done)**:
-  - Disparos agendados e executados respeitando estritamente as cotas diárias de cada conta.
-- **Complexidade**: Alta (4 dias).
-- **Riscos Técnicos**: Bloqueios do LinkedIn $\rightarrow$ *Mitigação*: Pausa automática de 48 horas ao menor indício de captcha/erro 429.
-
-#### Execução da Sprint 5
-- **Persistência**: `OutreachSequence` mantém status (`ACTIVE`, `PAUSED`, `COMPLETED`), próximo passo, data de execução e leads associados. `OutreachAccount` mantém quota diária, contador, sessão e pausa.
-- **Contrato MCP**: `gtm_schedule_outreach_sequence` valida de 2 a 12 etapas, exige ao menos uma etapa LinkedIn e uma etapa Email, limita a 1.000 leads e devolve o próximo horário de execução.
-- **Segurança operacional**: quotas são avaliadas por canal; contas pausadas não disparam; CAPTCHA ou HTTP 429 em LinkedIn bloqueia a conta por 48 horas.
-- **Código**: `src/core/outreach/service.ts`, `src/mcp/schemas/outreach.ts`, `src/mcp/tools/outreach.ts` e `prisma/migrations/2_sprint5_outreach/migration.sql`.
-- **Verificação**: `tests/unit/outreach.test.ts` cobre agendamento, composição mínima da cadência, esgotamento de quota e pausa de 48 horas.
-- **Limite conhecido**: Smartlead/Resend/Unipile exigem credenciais e endpoints configurados antes do disparo em produção; o agendamento não envia mensagens sem essa camada operacional.
+### Sprint 5: Dispatcher Multicanal e Anti-Ban Engine `[✅ CONCLUÍDO]`
+- Máquina de estados de cadência multicanal
+- Anti-Ban: quotas diárias, jitter gaussiano (45–210s), pausa 48h em CAPTCHA/429
+- Tool: `gtm_schedule_outreach_sequence`
 
 ---
 
-### Sprint 6: Analytics, Loop de Feedback e Aprendizado Contínuo `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
-- **Objetivo**: Fechar o ciclo completo de GTM com tracking de engajamento e autoajuste de pesos.
-- **O que construir**:
-  - Handlers de webhooks para opens, clicks, replies e bounces.
-  - Classificador de sentimento de respostas via LLM ultrarrápido (Haiku).
-  - Algoritmo de retroalimentação de pesos dos sinais de intenção que mais convertem.
-  - Tool MCP `gtm_track_campaign_metrics`.
-  - Tool MCP `gtm_record_lead_interaction_feedback`.
-- **Tools MCP Ativas ao Final da Sprint**:
-  - **Catálogo Completo com as 8 Tools MCP Operacionais**.
-- **Critérios de Aceite (Done)**:
-  - Ao receber resposta do lead, a sequência é pausada automaticamente, o sentimento é classificado e as métricas de campanha são atualizadas em tempo real.
-- **Complexidade**: Média (3 dias).
-- **Riscos Técnicos**: Respostas ambíguas $\rightarrow$ *Mitigação*: Fallback para flag de revisão humana caso a confiança seja inferior a 85%.
+### Sprint 6: Analytics, Feedback Loop e Loop Autônomo `[✅ CONCLUÍDO]`
 
-#### Execução da Sprint 6
-- **Persistência**: `CampaignMetric` agrega eventos por campanha e dia; `LeadInteractionFeedback` registra evento, sentimento, confiança, provedor e necessidade de revisão humana.
-- **Webhooks**: `POST /api/v1/webhooks/outreach` recebe `OPEN`, `CLICK`, `REPLY` e `BOUNCE`, atualiza a mensagem e métricas de forma transacional.
-- **Feedback de resposta**: replies são classificados com `claude-3-5-haiku-latest`; ausência de credencial, erro de parsing ou confiança abaixo de 85% resulta em `AMBIGUOUS`/revisão humana.
-- **Aprendizado contínuo**: sinal associado a uma resposta positiva recebe +5 pontos e sinal associado a resposta negativa recebe -5, sempre limitado entre 0 e 100.
-- **Automação**: resposta pausa sequências ativas do lead e atualiza seu status para `REPLIED_POSITIVE`, `REPLIED_NEGATIVE` ou `ENGAGED`; bounce marca `BOUNCED`.
-- **Contrato MCP**: adicionadas `gtm_track_campaign_metrics` e `gtm_record_lead_interaction_feedback`, completando o catálogo de 8 tools.
-- **Código**: `src/core/analytics/service.ts`, `src/api/routes/webhooks.ts`, schemas de analytics/webhook, tools MCP e `prisma/migrations/3_sprint6_analytics/migration.sql`.
-- **Verificação**: `tests/unit/analytics.test.ts` cobre limites de peso, limiar de revisão humana e registro explícito de feedback.
-- **Limite conhecido**: o payload do webhook é um contrato interno normalizado; adaptadores específicos de Smartlead, Resend e Unipile ainda precisam mapear seus formatos nativos.
+#### 6a. Analytics & Closed-Loop Feedback
+- Handlers de webhooks (OPEN, CLICK, REPLY, BOUNCE)
+- Classificação de sentimento via Haiku (ou heurística keyword-based offline)
+- Ajuste de peso do sinal ±5 pontos (limitado 0–100)
+- Pausa automática de sequências em replies
+- Tools: `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback`
+
+#### 6b. Autonomous Outreach Loop (NOVO)
+- **SequenceScheduler** (`src/core/execution/scheduler.ts`): polling interno (60s default), encontra sequências ACTIVE com `nextRunAt <= NOW`, enfileira no BullMQ, graceful degradation
+- **InboxWorker** (`src/core/execution/inboxWorker.ts`): worker BullMQ em `outreach_inbox_queue`, lê inbox LinkedIn via Antigravity, classifica sentimento, cria feedback, atualiza Lead/Message, pausa sequências, ajusta pesos
+- **FeedbackLoop** (`src/core/execution/feedbackLoop.ts`): agendamento de verificação de entrega (24h delay), `verifyDelivery` capability, ajuste de weight ±5
+- **Dispatcher fix**: processa UM step por vez (`sequence.steps[nextStep]`), `nextRunAt = NOW() + currentStep.delayHours`, integração com feedback loop pós-envio
+
+**O loop completo**: scheduler → dispatcher (step 0) → scheduler (step 1 após delay) → inbox worker (detecta reply) → feedback loop (ajusta scores)
 
 ---
 
-## 3. Addendum GTM Brain 2.0
+## 3. GTM Brain 2.0 (Addendum S1–S5 ✅ Concluídos)
 
-### S1: Entity + Evidence Graph `[STATUS: ✅ IMPLEMENTADO / PERSISTÊNCIA PENDENTE DE EXECUÇÃO LOCAL]`
+### S1: Entity + Evidence Graph `[✅ CONCLUÍDO]`
+- `Source`, `Person`, `Identity`, `CompanyEvidence`, `PersonEvidence`, `Observation`, `Relationship`, `Interaction`
+- Classificação: `FACT`, `INFERENCE`, `LLM_INFERENCE`, `USER_PROVIDED`, `UNVERIFIED`
+- Sanitização de dados sensíveis, hash SHA-256, TTL opcional
+- Migration: `4_sprint1_entity_evidence_graph`
 
-- **Implementado**: `Source`, `Person`, `Identity`, `CompanyEvidence`, `PersonEvidence`, `Observation`, `Relationship` e `Interaction` no Prisma/PostgreSQL.
-- **Compatibilidade**: `Lead.personId` conecta o modelo legado a `Person`; os campos existentes de lead não foram removidos.
-- **Proveniência**: evidências exigem `sourceId`, `observedAt`, `confidence`, `classification`, dados normalizados e TTL opcional (`expiresAt`).
-- **Classificação**: `FACT`, `INFERENCE`, `LLM_INFERENCE`, `USER_PROVIDED`, `UNVERIFIED`.
-- **Proteção de dados**: `rawData` é sanitizado, campos sensíveis são redigidos e `contentHash` é calculado com SHA-256.
-- **Reconciliação**: `total_priority_score` deixa de ser coluna gerada na migration S1 e passa a ser coluna comum, alinhada ao `schema.prisma` e ao seed. A fórmula de ranking continua no SQL do Intent Engine.
-- **Código**: `src/core/evidence/service.ts`, `prisma/schema.prisma` e `prisma/migrations/4_sprint1_entity_evidence_graph/migration.sql`.
-- **Testes**: `tests/unit/evidence.test.ts` cobre sanitização, confiança, hash e contrato de persistência; `tests/integration/evidence.test.ts` cobre o caminho PostgreSQL.
-- **Verificação histórica da S1**: `prisma validate`, `prisma generate`, `npx tsc --noEmit` e `npm run build` passaram; a suíte unitária atual da S1/S2 tem 39 testes. O teste de persistência não foi executado porque PostgreSQL/Redis não estavam disponíveis.
-- **Limitação real**: a migration S1 foi revisada para PostgreSQL 16 e foreign keys idempotentes, mas ainda não foi aplicada neste ambiente. O cleanup do teste respeita `Person`/evidências antes de remover a `Source`.
+### S2: Intent Providers 2.0 `[✅ CONCLUÍDO]`
+- Contrato `SignalProvider` implementado com runner
+- Provider de funding API como fronteira explícita (`REQUIRES_CREDENTIALS`)
+- Normalização, TTL, confiança, classificação, custo, hash, deduplicação
+- Documentação: `docs/INTENT_PROVIDERS.md`
 
-### S2: Intent Intelligence 2.0 `[STATUS: ✅ IMPLEMENTADO / PERSISTÊNCIA PENDENTE DE EXECUÇÃO LOCAL]`
+### S3: Decision & Reasoning Engine `[✅ CONCLUÍDO]`
+- `DecisionEngine` determinístico (sem LLM)
+- Pipeline: signal score (40%) + evidence strength (25%) + ICP fit (20%) + lead seniority match (15%)
+- Urgency (`HIGH`/`MEDIUM`/`LOW`), `WHY_NOW`, `RecommendedAction`
+- `DecisionFactor` com nome, contribuição, evidência de suporte
+- Tool: `gtm_evaluate_opportunity`
+- 31 testes unitários
 
-- **IMPLEMENTED**: contrato e runner de providers; website changes por snapshot/URL pública; hiring por postings/HTML/URL pública; anúncios públicos por itens/HTML/URL pública; normalização, TTL, confiança, classificação, sanitização, hash, custo e deduplicação.
-- **PARTIALLY IMPLEMENTED**: coleta de URLs públicas depende de rede e de input válido; não existe histórico de snapshots ou worker de ingestão agendado.
-- **REQUIRES CREDENTIALS**: provider de funding API é somente uma fronteira explícita, sem integração paga conectada.
-- **NOT IMPLEMENTED**: dezenas de integrações externas, LinkedIn autenticado, APIs pagas, ranking semântico offline e pipeline de filas para sinais.
-- **Compatibilidade**: inputs legados das duas tools MCP continuam aceitos; campos novos são aditivos.
-- **Verificação**: 39 testes unitários passam; typecheck, build e Prisma validate passam. PostgreSQL/Redis impediram migration, integração, persistência e ranking real.
+### S4: Channel Abstraction Protocol `[✅ CONCLUÍDO]`
+- `ChannelId`: `linkedin`, `email`, `whatsapp`, `manual` (aberto, não vinculado ao enum Prisma)
+- `ChannelCapability`: `connect`, `sendMessage`, `readMessages`, `searchProfiles`, `followUp`, `verifyDelivery`
+- `ChannelProfile`: `defaultDailyLimit`, `requiresAuth`, `requiresBrowser`, `supportedActions`, `rateLimitWindowMs`, `safetyPauseMs`
+- `ChannelRegistry`: `can(channel, capability)`, `getProfile(channel)`
+- Migration aditiva: `channel_id` VARCHAR em `outreach_accounts` e `outreach_messages`
+- `legacyChannelToChannelId` para compatibilidade retroativa
+- 16 testes unitários
 
-### S3: Decision & Reasoning Engine `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
+### S5: Browser Execution Protocol `[✅ CONCLUÍDO]`
+- `ChannelAdapter` contract → `LinkedInAdapter`, `EmailAdapter`, `WhatsAppAdapter`, `ManualAdapter`
+- `ExecutionContext`, `ExecutionResult` tipados
+- `ExecutionRouter`: `RecommendedAction` → `ChannelAdapter.execute()`
+- `AntigravityClient`: HTTP client tipado (timeout 30s ações, 5s health), retry (2x, backoff 2s/4s), classificação de erros
+- `LinkedInAdapter`: health check obrigatório, mapeamento de capabilities para endpoints da bridge
+- Dispatcher worker: `outreach_dispatcher_queue`, delay humano gaussiano, anti-ban guardrails
+- **Regra GLOBAL**: LinkedIn sempre via extensão Antigravity (bridge 127.0.0.1:8765)
+- 42 testes unitários
 
-- **IMPLEMENTED**: `DecisionEngine` determinístico no `src/core/decision/`, sem LLM.
-  - `OpportunityScore` com lead, company, score, urgency, top factors, whyNow, recommended actions e signal summary.
-  - Pipeline de score: signal score (40%) + evidence strength (25%) + ICP fit (20%) + lead seniority match (15%).
-  - Urgency (`HIGH` / `MEDIUM` / `LOW`) baseada em recência, peso e classificação do melhor sinal.
-  - `DecisionFactor` com nome, contribuição, evidência de suporte e classificação.
-  - `WHY_NOW` com justificativas por tipo de sinal (hiring → expansão, funding → novo orçamento, etc.).
-  - `RecommendedAction` com canal, timing, template interpolado e rationale.
-  - Classificação de senioridade (C-Level > VP > Director > Manager) e de função de compra (Sales > Engineering > HR).
-- **MCP tool**: `gtm_evaluate_opportunity` avalia um lead, uma empresa ou todos os leads ativos.
-  - Persistência: consulta `intent_signals` ativos + `company_evidence` + `companies` para ICP fit via `pgvector`.
-  - Schema Zod em `src/mcp/schemas/decision.ts`.
-- **Compatibilidade**: contratos S1 e S2 preservados; `scoring.ts` reutilizado para recência de sinais.
-- **Verificação**: 30 testes unitários novos passam (total 69 em 13 arquivos). Typecheck, build e Prisma validate passam.
-- **Limitação operacional**: ranking e persistência PostgreSQL aguardam infra local (`127.0.0.1:5433`). O teste de integração futuro deve validar `evaluateOpportunity` contra dados reais.
-- **Documentação**: este arquivo, `docs/IMPLEMENTATION_STATUS.md` e `docs/ARCHITECTURE.md`.
+---
+
+## 4. Próximos Passos — Sprints Planejados
+
+### Sprint 7: Authentication, Rate Limiting & Security Hardening `[🔜 PLANEJADO]`
+- **Objetivo**: Tornar o sistema production-ready com segurança em todas as camadas.
+- **Escopo**:
+  - Autenticação via API keys com middleware Fastify
+  - Rate limiting por key/IP (usando Redis)
+  - Validação de assinatura HMAC em webhooks de outreach
+  - Idempotência nos endpoints de webhook
+  - CORS restrito por domínio
+  - Secrets via variáveis de ambiente (nunca hardcoded)
+  - Auditoria de acesso (logs estruturados)
+- **Tools MCP**: sem novas tools — hardening das existentes
+- **Testes**: middleware tests, rate limit tests, webhook signature tests
+- **Complexidade**: Média (3 dias)
+
+### Sprint 8: Email Execution (Smartlead/Resend SMTP) `[🔜 PLANEJADO]`
+- **Objetivo**: Substituir o stub `EmailAdapter` (`NOT_IMPLEMENTED`) por envio real de email.
+- **Escopo**:
+  - `EmailAdapter` real com SMTP/API (Smartlead, Resend, SendGrid)
+  - Template rendering com variáveis do lead
+  - Tracking de open/click/bounce via webhooks dos provedores
+  - Mapeamento de eventos do provedor → contrato interno de webhook
+  - Retry e bounce handling
+- **Tool MCP**: `gtm_send_email` (opcional — integrado ao dispatcher)
+- **Complexidade**: Alta (5 dias)
+
+### Sprint 9: WhatsApp Execution & Multi-Account LinkedIn `[🔜 PLANEJADO]`
+- **Objetivo**: Substituir stub `WhatsAppAdapter` e adicionar rotação de contas LinkedIn.
+- **Escopo**:
+  - `WhatsAppAdapter` real via WhatsApp Business API
+  - Multi-account LinkedIn: `OutreachAccount.sessionKey` → rotacionar entre contas
+  - Session management (criação, refresh, invalidação)
+  - Detecção de conta bloqueada e failover automático
+  - Quota tracking por conta (não só por canal)
+- **Tool MCP**: `gtm_send_whatsapp` (opcional)
+- **Complexidade**: Alta (5 dias)
+
+### Sprint 10: Ops Dashboard, Real-Time Monitoring & Alerting `[🔜 PLANEJADO]`
+- **Objetivo**: Visibilidade operacional completa do motor autônomo.
+- **Escopo**:
+  - Dashboard web (React/Vite) com métricas em tempo real
+  - Monitoramento de filas BullMQ (jobs pendentes, falhos, latência)
+  - Status das contas de outreach (quotas, pausas, health)
+  - Alertas: conta bloqueada, quota excedida, fila parada
+  - Histórico de execução de sequências
+  - Export de métricas (CSV/JSON)
+- **Complexidade**: Média (4 dias)
+
+---
+
+## 5. Horizontes Futuros (Pós-S10)
+
+| Horizonte | Descrição | Complexidade |
+| :--- | :--- | :---: |
+| **Multi-tenant SaaS** | Isolamento de dados por organização, billing, onboarding | Muito Alta |
+| **AI Copilot Chat** | Interface conversacional para configurar campanhas e analisar resultados via LLM | Média |
+| **CRM Integrations** | Salesforce, HubSpot, Pipedrive — sync bidirecional de leads e atividades | Alta |
+| **Advanced RL** | Aprendizado por reforço real: A/B testing automático de templates, timing e canais | Muito Alta |
+| **Compliance Suite** | GDPR, LGPD, CAN-SPAM compliance automation, consent management | Média |

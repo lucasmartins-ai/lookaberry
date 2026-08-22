@@ -261,7 +261,30 @@ A migration `5_sprint2_intent_providers` faz backfill de `observed_at`, `provide
 
 Os providers públicos iniciais são documentados em [INTENT_PROVIDERS.md](INTENT_PROVIDERS.md). `FACT`, `INFERENCE`, `LLM_INFERENCE`, `USER_PROVIDED` e `UNVERIFIED` permanecem distintos no armazenamento e no score.
 
-## 5. Query Exemplar de Busca Híbrida (Vector + Rules)
+---
+
+## 5. Channel Abstraction (S4)
+
+A S4 adiciona `channel_id VARCHAR(50)` a `outreach_accounts` e `outreach_messages` como campo complementar ao `channel_enum`. O backfill mapeia os valores legados (`LINKEDIN_CONNECT`/`LINKEDIN_MESSAGE → linkedin`, `EMAIL → email`, `MANUAL_TASK → manual`) sem remover o enum. `legacyChannelToChannelId` em `src/core/channels/types.ts` garante compatibilidade retroativa em todas as operações de leitura/escrita.
+
+A migration `6_sprint4_channel_abstraction` aplica as colunas de forma aditiva. O `channel_id` permite que novos canais (`whatsapp`) sejam usados sem alterar o enum Prisma.
+
+---
+
+## 6. Autonomous Outreach Loop (S6)
+
+A S6 não adiciona novas tabelas — reutiliza os modelos existentes (`outreach_sequences`, `outreach_messages`, `lead_interaction_feedback`, `campaign_metrics`, `intent_signals`) e adiciona duas filas BullMQ:
+
+- `outreach_dispatcher_queue` — consumida pelo `dispatcherWorker` (S5, corrigido em S6)
+- `outreach_inbox_queue` — consumida pelo `inboxWorker` (S6)
+
+O campo `outreach_messages.reply_sentiment` (VARCHAR 50) armazena o sentimento classificado pelo inbox worker (`POSITIVE`, `NEGATIVE`, `AMBIGUOUS`). O campo `replied_at` registra o timestamp da detecção da resposta.
+
+O índice `idx_outreach_sequences_due` em `(status, next_run_at)` é usado pelo `SequenceScheduler` para polling eficiente de sequências pendentes.
+
+---
+
+## 7. Query Exemplar de Busca Híbrida (Vector + Rules)
 
 A query abaixo é uma forma resumida do ranqueamento sem qualquer custo de inferência em LLM. A implementação real usa CTEs em `src/core/intent/service.ts` para aplicar recência, confiança, qualidade da fonte, classificação e deduplicação:
 

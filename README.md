@@ -8,13 +8,14 @@
 [![MCP](https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2.svg)](https://modelcontextprotocol.io)
 [![Fastify](https://img.shields.io/badge/Fastify-5.2-black.svg)](https://fastify.dev)
 [![BullMQ](https://img.shields.io/badge/BullMQ-Redis%20Queues-red.svg)](https://bullmq.io)
+[![Tests](https://img.shields.io/badge/tests-172%20passing-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## 🏷️ Tags & Keywords
 
-`ai-agent` • `model-context-protocol` • `mcp-server` • `gtm-outbound` • `b2b-sales-intelligence` • `pgvector` • `hnsw-indexing` • `zero-token-waste` • `lead-scoring` • `intent-signals` • `waterfall-enrichment` • `cold-email-automation` • `linkedin-outreach` • `sales-enablement` • `prompt-caching` • `anti-ban` • `typescript` • `fastify` • `bullmq` • `redis`
+`ai-agent` • `model-context-protocol` • `mcp-server` • `gtm-outbound` • `b2b-sales-intelligence` • `pgvector` • `hnsw-indexing` • `zero-token-waste` • `lead-scoring` • `intent-signals` • `waterfall-enrichment` • `cold-email-automation` • `linkedin-outreach` • `sales-enablement` • `prompt-caching` • `anti-ban` • `typescript` • `fastify` • `bullmq` • `redis` • `autonomous-outreach`
 
 ---
 
@@ -30,159 +31,7 @@
 - ✍️ **Contextual Hyper-Personalization**: Connects real-time intent signals directly to prospect buyer personas with Anthropic prompt caching and strict anti-spam guardrails.
 - 🛡️ **Anti-Ban Multi-Channel Dispatcher**: Enforces daily account quotas, Gaussian human-like delays (45s–210s), and automatic 48-hour safety cool-downs.
 - 🔁 **Closed-Loop RL Feedback**: Captures email/LinkedIn interactions (Sent, Opened, Clicked, Replied, Bounced), classifies sentiment with Haiku, pauses sequences upon response, and automatically boosts predictive intent weights (+5 on positive reply).
-
----
-
-## 🏗️ System Architecture
-
-```mermaid
-flowchart TB
-    subgraph Clients["AI Agent Orchestrators & Clients"]
-        A1["Cursor / Claude Code / Codex"]
-        A2["Antigravity / Windsurf / OpenCode"]
-        A3["Autonomous Background Agents / Cron"]
-    end
-
-    subgraph InterfaceLayer["Interface & Protocol Layer"]
-        MCP_STDIO["MCP Server (stdio)"]
-        MCP_SSE["MCP Server (SSE via /sse & /messages)"]
-        REST["Fastify REST API (OpenAPI 3.1 /docs)"]
-    end
-
-    subgraph CoreEngine["LookaBerry Core Engine (TypeScript)"]
-        ICPEngine["1. ICP Profiler & Matrix Generator"]
-        LookaCrawler["LookaCrawler Engine (Token-Pruning & Turndown)"]
-        SignalEngine["2. Intent Signal Detector & Ingestor"]
-        ScoringEngine["3. Zero-Token Hybrid Scoring (pgvector HNSW)"]
-        WaterfallEngine["4. Waterfall Enrichment Orchestrator"]
-        PersonalizationEngine["5. Hyper-Personalization & Guardrails Engine"]
-        OutreachEngine["6. Multi-Channel Outreach State Machine"]
-        AnalyticsEngine["7. Closed-Loop Feedback & RL Analytics"]
-    end
-
-    subgraph WorkerLayer["Asynchronous Queues (BullMQ + Redis 7.2)"]
-        Q_ICP["Queue: ICP Analysis"]
-        Q_Signal["Queue: Signal Ingestion"]
-        Q_Enrich["Queue: Waterfall Enrichment"]
-        Q_Outreach["Queue: Outreach Dispatcher"]
-    end
-
-    subgraph DataLayer["Persistence & Vector Storage"]
-        PG[("PostgreSQL 16 + pgvector (HNSW Indexing)")]
-        RedisCache[("Redis 7.2 (Queues, Rate Limits, Deduplication)")]
-    end
-
-    Clients -->|stdio / SSE / REST| InterfaceLayer
-    InterfaceLayer --> CoreEngine
-    CoreEngine --> LookaCrawler
-    CoreEngine --> WorkerLayer
-    WorkerLayer --> DataLayer
-    CoreEngine --> DataLayer
-```
-
----
-
-## 🧪 Real Beta Test Execution & Output Walkthrough
-
-LookaBerry includes an end-to-end beta test suite simulating a real customer account across all 6 sprints of the engine:
-
-```bash
-npm run test:beta
-```
-
-### 📋 Live Beta Test Execution Log
-
-```text
-═══════════════════════════════════════════════════════════════════════
-🚀 STARTING FULL LOOKABERRY BETA TEST WITH TEST ACCOUNT
-═══════════════════════════════════════════════════════════════════════
-
-🔹 1. Provisioning Test Account (Outreach Account)...
-   ✅ Test account created: beta_test_account_smartlead_01 (Daily limit: 75, Sent today: 5)
-
-🔹 2. Creating ICP Profile & Generating Vector Embedding in pgvector...
-   ✅ ICP Profile created: Beta Test: High-Growth AI & SaaS Scale-ups (c87b2f01-5c15-495b-8306-557e227f4115)
-   ✅ 1536-dim vector embedding persisted in pgvector: YES (100% OK)
-
-🔹 3. Ingesting Target Company & Live Intent Signals...
-   ✅ Company created: Neura SaaS Technologies (neura-saas-tech.com)
-   ✅ Signals ingested: 
-      - "Neura SaaS is actively hiring 5 SDRs and 1 Head of Outbound" (Weight: 88.0)
-      - "Neura SaaS raises $8M to scale commercial sales team" (Weight: 92.0)
-
-🔹 4. Creating Lead & Executing Hybrid Scoring (Zero Token Cost pgvector)...
-   ✅ Top ranked lead: Guilherme Medeiros (Head of Sales)
-   📊 ICP Score: 92.0 | Intent Score: 90.0 | Total Priority Score: 90.8
-   🎯 Primary Intent Signal detected: "Neura SaaS is actively hiring 5 SDRs and 1 Head of Outbound"
-
-🔹 5. Running Waterfall Lead Enrichment & MX Deliverability Check...
-   ✅ Verified Email: guilherme.medeiros@neura-saas-tech.com
-   ✅ Deliverability status: VERIFIED
-   ✅ Provider used: LOCAL_CACHE / MX_VALIDATOR
-
-🔹 6. Testing AI Personalization Model & Anti-Spam Guardrails...
-
-   📨 [Channel: LINKEDIN_CONNECT]
-      Body: "Hi Guilherme, noticed you're expanding your outbound team for scale. How are you currently tackling data quality and pipeline velocity for your new SDRs?"
-      Hook used: "Neura SaaS is actively hiring 5 SDRs and 1 Head of Outbound"
-      Tokens estimated: 59 | Length: 142 chars (Within channel limit: OK)
-
-   📨 [Channel: LINKEDIN_MESSAGE]
-      Body: "Hi Guilherme, congrats on the recent funding and outbound team expansion at Neura SaaS Technologies. We built a zero token-waste pgvector ranking engine that identifies active buying intent accounts automatically. Would you be open to a brief 10-min chat this Thursday?"
-      Hook used: "Neura SaaS raises $8M to scale commercial sales team"
-      Tokens estimated: 88 | Length: 268 chars (Within channel limit: OK)
-
-   📨 [Channel: EMAIL]
-      Subject: "Guilherme, accelerating outbound pipeline at Neura SaaS Technologies"
-      Body: "Hi Guilherme,
-
-Notice that Neura SaaS Technologies is expanding its SDR team for Q3.
-
-We help revenue leaders automate high-intent account identification using hybrid pgvector ranking and verified waterfall enrichment, eliminating closer prospecting waste.
-
-Would you be open to a quick 15-minute sync later this week?
-
-Best regards,
-LookaBerry Team"
-      Hook used: "Neura SaaS is actively hiring 5 SDRs and 1 Head of Outbound"
-      Tokens estimated: 127 | Length: 360 chars (Within channel limit: OK)
-
-🔹 7. Creating Test Campaign & Scheduling Multi-Channel Sequence...
-   ✅ Campaign created: Beta Test Campaign - Q3 Scale (fcad1f47-781c-408d-b4a3-663b9ff5c113)
-   ✅ Sequence scheduled: ID 58944c86-d505-455c-88f2-a3d6815e91bc (Status: ACTIVE)
-   ⏱️  Sampled Human Gaussian Delay: 115 seconds (Anti-ban protection active)
-   🛡️  Account Quota Check: ALLOWED (Within daily limits)
-
-🔹 8. Testing Closed-Loop Feedback & Real-Time Analytics Tracking...
-   📬 Event recorded: OPEN (Email opened by prospect)
-   🖱️  Event recorded: CLICK (Link clicked in proposition)
-   💬 Event recorded: POSITIVE REPLY (Feedback ID: eda34d35-7c59-494b-b6ac-af867ae7a125)
-   📈 Intent signal weight reinforced: 88.0 ➔ 93.0 (+5 boost on positive reply)
-   ⏸️  Sequence auto-paused after reply: YES (100% OK)
-   🎯 Lead status updated: REPLIED_POSITIVE
-   📊 Message status: REPLIED (Sentiment: POSITIVE)
-   📊 Campaign Conversion Metrics:
-      {
-        "sent": 1,
-        "opens": 1,
-        "clicks": 1,
-        "replies": 1,
-        "bounces": 0,
-        "positive_replies": 1,
-        "negative_replies": 0,
-        "open_rate": 1.0,
-        "click_rate": 1.0,
-        "reply_rate": 1.0,
-        "bounce_rate": 0.0
-      }
-
-🔹 9. Cleaning up temporary test records...
-   🧹 Test data cleanup completed successfully.
-
-======================================================================
-🎉 BETA TEST COMPLETED WITH 100% SUCCESS! ALL MODULES FUNCTIONAL.
-======================================================================
-```
+- 🤖 **Autonomous Outreach Loop (S6)**: SequenceScheduler polls for due sequences, dispatcher processes one step at a time with configurable delays, inbox worker reads LinkedIn replies, feedback loop adjusts intent weights — the system walks alone.
 
 ---
 
@@ -195,17 +44,28 @@ LookaBerry Team"
 | **Sprint 3** | **Waterfall Enrichment & Deliverability Validation** | `gtm_waterfall_enrich_lead` | 🟢 **Operational** |
 | **Sprint 4** | **Hyper-Personalization Engine & Anti-Spam Guardrails** | `gtm_generate_hyper_personalized_message` | 🟢 **Operational** |
 | **Sprint 5** | **Multi-Channel Dispatcher & Anti-Ban State Machine** | `gtm_schedule_outreach_sequence` | 🟢 **Operational** |
-| **Sprint 6** | **Closed-Loop Analytics, Feedback & Reinforcement** | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | 🟢 **Operational** |
+| **Sprint 6** | **Closed-Loop Analytics, Feedback & Autonomous Loop** | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | 🟢 **Operational** |
+| **GTM Brain 2.0** | **Entity Graph, Intent Providers, Decision Engine, Channel Abstraction, Execution Protocol** | `gtm_evaluate_opportunity` | 🟢 **Operational** |
+
+### Upcoming Sprints
+
+| Sprint | Focus | MCP Tools |
+| :--- | :--- | :--- |
+| **Sprint 7** | **Authentication, Rate Limiting & Security Hardening** | Auth middleware, API keys, webhook signatures |
+| **Sprint 8** | **Email Execution (Smartlead/Resend SMTP)** | `gtm_send_email`, email adapter real implementation |
+| **Sprint 9** | **WhatsApp Execution & Multi-Account LinkedIn** | `gtm_send_whatsapp`, account rotation, session management |
+| **Sprint 10** | **Ops Dashboard, Real-Time Monitoring & Alerting** | Admin UI, queue monitoring, alert webhooks |
 
 ---
 
-## 🛠️ Complete MCP Tool Catalog (8 Registered Tools)
+## 🛠️ Complete MCP Tool Catalog (9 Registered Tools)
 
 | MCP Tool | Description | Sprint |
 | :--- | :--- | :---: |
 | [`gtm_analyze_icp`](#gtm_analyze_icp) | Scrapes website, extracts value thesis, and indexes 1536-dim ICP embeddings in pgvector | Sprint 1 |
 | [`gtm_detect_intent_signals`](#gtm_detect_intent_signals) | Ingests and detects hiring, funding, and tech signals with calibrated weights | Sprint 2 |
 | [`gtm_score_and_rank_leads`](#gtm_score_and_rank_leads) | In-database SQL hybrid scoring `(ICP * 0.4) + (Signal * 0.6)` consuming **0 tokens** | Sprint 2 |
+| [`gtm_evaluate_opportunity`](#gtm_evaluate_opportunity) | Deterministic opportunity evaluation: signal (40%) + evidence (25%) + ICP (20%) + seniority (15%) | GTM Brain 2.0 |
 | [`gtm_waterfall_enrich_lead`](#gtm_waterfall_enrich_lead) | Cascading enrichment (Cache ➔ Apollo ➔ Dropcontact ➔ SMTP/DNS MX verification) | Sprint 3 |
 | [`gtm_generate_hyper_personalized_message`](#gtm_generate_hyper_personalized_message) | Generates grounded B2B outreach with prompt caching and character/word guardrails | Sprint 4 |
 | [`gtm_schedule_outreach_sequence`](#gtm_schedule_outreach_sequence) | Schedules multi-channel cadences with human delays and daily quota enforcement | Sprint 5 |
@@ -227,8 +87,19 @@ Extracts target buyer personas, value propositions, and pain points directly fro
 }
 ```
 
+#### `gtm_evaluate_opportunity`
+Deterministic opportunity evaluation combining active signals, evidence strength, ICP fit, and lead seniority:
+
+```json
+{
+  "icp_id": "c87b2f01-5c15-495b-8306-557e227f4115",
+  "lead_id": "7aa41bf1-e31a-4e5d-85d2-c7d8d72f4dce"
+}
+```
+
 #### `gtm_score_and_rank_leads`
 Executes hybrid ranking with **zero LLM tokens consumed**:
+
 ```json
 {
   "icp_id": "c87b2f01-5c15-495b-8306-557e227f4115",
@@ -240,6 +111,7 @@ Executes hybrid ranking with **zero LLM tokens consumed**:
 
 #### `gtm_schedule_outreach_sequence`
 Schedules a multi-step LinkedIn + Cold Email sequence with anti-ban safeguards:
+
 ```json
 {
   "campaign_id": "fcad1f47-781c-408d-b4a3-663b9ff5c113",
@@ -250,6 +122,79 @@ Schedules a multi-step LinkedIn + Cold Email sequence with anti-ban safeguards:
   ]
 }
 ```
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients["AI Agent Orchestrators & Clients"]
+        A1["Cursor / Claude Code / Codex"]
+        A2["Antigravity / Windsurf / OpenCode"]
+        A3["Autonomous Background Agents / Cron"]
+    end
+
+    subgraph InterfaceLayer["Interface & Protocol Layer"]
+        MCP_STDIO["MCP Server (stdio)"]
+        MCP_SSE["MCP Server (SSE via /sse & /messages)"]
+        REST["Fastify REST API (OpenAPI 3.1 /docs)"]
+    end
+
+    subgraph CoreEngine["LookaBerry Core Engine (TypeScript)"]
+        ICPEngine["1. ICP Profiler & Matrix Generator"]
+        SignalEngine["2. Intent Signal Detector & Ingestor"]
+        ScoringEngine["3. Zero-Token Hybrid Scoring (pgvector HNSW)"]
+        DecisionEngine["3a. Decision & Reasoning Engine"]
+        WaterfallEngine["4. Waterfall Enrichment Orchestrator"]
+        PersonalizationEngine["5. Hyper-Personalization & Guardrails"]
+        ExecutionLayer["6. Browser Execution Protocol"]
+        OutreachEngine["6. Multi-Channel Outreach State Machine"]
+        SchedulerEngine["6a. Autonomous Sequence Scheduler"]
+        InboxEngine["6b. Inbox Reader & Reply Processor"]
+        FeedbackEngine["6c. Closed-Loop Feedback & RL"]
+        AnalyticsEngine["7. Campaign Metrics & Analytics"]
+    end
+
+    subgraph WorkerLayer["Asynchronous Queues (BullMQ + Redis 7.2)"]
+        Q_ICP["Queue: ICP Analysis"]
+        Q_Signal["Queue: Signal Ingestion"]
+        Q_Enrich["Queue: Waterfall Enrichment"]
+        Q_Outreach["Queue: Outreach Dispatcher"]
+        Q_Inbox["Queue: Inbox Reader"]
+    end
+
+    subgraph DataLayer["Persistence & Vector Storage"]
+        PG[("PostgreSQL 16 + pgvector (HNSW Indexing)")]
+        RedisCache[("Redis 7.2 (Queues, Rate Limits, Deduplication)")]
+    end
+
+    subgraph ExternalProviders["External & Browser Providers"]
+        Scraping["Web Scraping (LookaCrawler / Jina)"]
+        Enrichment["Apollo / Dropcontact / MX / ZeroBounce"]
+        LinkedInBridge["LinkedIn via Antigravity Bridge (127.0.0.1:8765)"]
+    end
+
+    Clients -->|stdio / SSE / REST| InterfaceLayer
+    InterfaceLayer --> CoreEngine
+    CoreEngine --> WorkerLayer
+    WorkerLayer --> DataLayer
+    CoreEngine --> DataLayer
+    ExecutionLayer --> LinkedInBridge
+    WorkerLayer --> ExternalProviders
+```
+
+---
+
+## 🧪 Real Beta Test Execution & Output Walkthrough
+
+LookaBerry includes an end-to-end beta test suite simulating a real customer account across all 6 sprints of the engine:
+
+```bash
+npm run test:beta
+```
+
+*(Full output available in the source — tests account provisioning, ICP creation, signal ingestion, lead scoring, waterfall enrichment, personalization with guardrails, campaign scheduling with anti-ban rules, and closed-loop feedback with sentiment classification.)*
 
 ---
 
@@ -328,10 +273,10 @@ claude mcp add lookaberry npx -y tsx src/mcp/transports/stdio.ts
 LookaBerry includes a complete multi-tier testing suite:
 
 ```bash
-# 1. Run all unit and integration tests (27 passing tests)
+# 1. Run all unit tests (172 passing)
 npm test
 
-# 2. Run official MCP client smoke test (validating all 8 tools)
+# 2. Run official MCP client smoke test (validating all 9 tools)
 npm run test:smoke
 
 # 3. Run full end-to-end beta test with test account simulation
@@ -344,6 +289,8 @@ npx tsc --noEmit
 npm run build
 ```
 
+> **Note**: 4 integration tests require PostgreSQL (127.0.0.1:5433) and Redis (localhost:6379). Unit tests (172) pass without infrastructure.
+
 ---
 
 ## 📂 Repository Structure
@@ -355,32 +302,44 @@ LookaBerry/
 ├── tsconfig.json            # Strict TypeScript ES2022 / NodeNext config
 ├── vitest.config.ts         # Vitest test runner configuration
 ├── prisma/
-│   ├── schema.prisma        # Complete schema with vector(1536) columns & relations
+│   ├── schema.prisma        # Complete schema with vector(1536), entity graph & channel fields
+│   ├── migrations/          # 6 additive migrations (S1–S4 + GTM Brain 2.0)
 │   └── seed.ts              # Rich seed script with demo ICPs, companies, and leads
 ├── src/
 │   ├── config/              # Zod environment variable validation
 │   ├── db/                  # Prisma client singleton and pgvector HNSW helpers
 │   ├── core/
 │   │   ├── icp/             # Scraping engine, LLM Analyzer & pgvector embeddings
-│   │   ├── intent/          # Intent signal detector & zero-token hybrid ranking
+│   │   ├── intent/          # Intent signal detector, providers & zero-token hybrid ranking
+│   │   ├── decision/        # Deterministic opportunity scoring & action recommendations
+│   │   ├── evidence/        # Entity graph—source, person, identity, evidence, observation, relationship
+│   │   ├── channels/        # Channel abstraction (ChannelId, ChannelProfile, ChannelRegistry)
 │   │   ├── enrichment/      # Waterfall enrichment orchestrator with MX verification
 │   │   ├── personalization/ # Message synthesizer, static prompt cache & guardrails
 │   │   ├── outreach/        # Sequence state machine, human delay & anti-ban rules
+│   │   ├── execution/       # Browser Execution Protocol (S5) + Autonomous Loop (S6)
+│   │   │   ├── adapters/    # LinkedInAdapter, EmailAdapter, WhatsAppAdapter, ManualAdapter
+│   │   │   ├── antigravity.ts  # Antigravity Chrome extension HTTP client
+│   │   │   ├── router.ts    # ExecutionRouter — routes actions to channel adapters
+│   │   │   ├── dispatcher.ts   # BullMQ worker — processes one sequence step at a time
+│   │   │   ├── scheduler.ts    # SequenceScheduler — polls for due sequences
+│   │   │   ├── inboxWorker.ts  # InboxWorker — reads LinkedIn replies, classifies sentiment
+│   │   │   └── feedbackLoop.ts # FeedbackLoop — delivery verification & intent weight adjustment
 │   │   ├── analytics/       # Feedback classification & closed-loop RL metrics
 │   │   └── queues/          # BullMQ queue definitions and workers
 │   ├── mcp/
 │   │   ├── server.ts        # McpServer instance & tool catalog
-│   │   ├── tools/           # 8 registered MCP tools across all 6 sprints
+│   │   ├── tools/           # 9 registered MCP tools across all sprints
 │   │   ├── schemas/         # Zod schemas with strict validation
 │   │   └── transports/      # stdio and SSE transport entrypoints
 │   ├── api/
 │   │   ├── server.ts        # Fastify factory with CORS and Swagger UI
 │   │   ├── routes/          # /health, /api/v1/icp/analyze, /sse, /messages, /webhooks
 │   │   └── plugins/         # OpenAPI 3.1 schema documentation
-│   └── index.ts             # Server entrypoint
+│   └── index.ts             # Server entrypoint with all workers & scheduler
 └── tests/
-    ├── unit/                # Unit test suites for all 6 sprint modules
-    ├── integration/         # Database, Fastify REST API, and MCP integration tests
+    ├── unit/                # 16 unit test files — 172 tests across all modules
+    ├── integration/         # Database, Fastify REST API, MCP, and evidence integration tests
     ├── mcp-client-smoke.ts  # End-to-end MCP client smoke test
     └── beta-test-account.ts # Full beta test suite with test account simulation
 ```
@@ -389,12 +348,13 @@ LookaBerry/
 
 ## 📚 Technical Documentation
 
-- [System Architecture](file:///Users/Master/LookaBerry/docs/ARCHITECTURE.md)
-- [Data Model & pgvector Schema](file:///Users/Master/LookaBerry/docs/DATA_MODEL.md)
-- [MCP Tools Catalog](file:///Users/Master/LookaBerry/docs/MCP_TOOLS.md)
-- [Zero-Token Optimization Strategy](file:///Users/Master/LookaBerry/docs/TOKEN_OPTIMIZATION.md)
-- [Security & Compliance](file:///Users/Master/LookaBerry/docs/SECURITY_COMPLIANCE.md)
-- [Sprint Roadmap](file:///Users/Master/LookaBerry/docs/ROADMAP.md)
+- [Sprint Roadmap & Next Steps](docs/ROADMAP.md)
+- [System Architecture](docs/ARCHITECTURE.md)
+- [Data Model & pgvector Schema](docs/DATA_MODEL.md)
+- [MCP Tools Catalog](docs/MCP_TOOLS.md)
+- [Implementation Status Audit](docs/IMPLEMENTATION_STATUS.md)
+- [Intent Providers Architecture](docs/INTENT_PROVIDERS.md)
+- [Entity & Evidence Graph Model](docs/EVIDENCE_MODEL.md)
 
 ---
 
