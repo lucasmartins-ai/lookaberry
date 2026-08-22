@@ -19,6 +19,7 @@ export const enrichmentQueue = new Queue('waterfall_enrichment_queue', {
   },
 });
 export const outreachQueue = new Queue('outreach_dispatcher_queue', { connection: redisConnection });
+export const outreachInboxQueue = new Queue('outreach_inbox_queue', { connection: redisConnection });
 
 export async function closeQueues() {
   await Promise.all([
@@ -26,6 +27,7 @@ export async function closeQueues() {
     signalQueue.close(),
     enrichmentQueue.close(),
     outreachQueue.close(),
+    outreachInboxQueue.close(),
   ]);
   await redisConnection.quit();
 }

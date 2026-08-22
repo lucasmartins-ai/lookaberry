@@ -35,3 +35,17 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Generated Prospecting, Outreach & Personal Artifacts
+docs/CV_*
+docs/cv_preview.png
+docs/CAMPAIGN_*
+docs/GTM_*
+docs/email_outreach_*
+docs/*.pdf
+docs/*.pdf.qlpreview/
+historico_tarefas_antigravity.csv
+*.csv
+scripts/seed-target-pipeline.ts
+
+

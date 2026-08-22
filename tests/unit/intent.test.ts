@@ -12,6 +12,8 @@ describe('Intent signal normalization', () => {
 
     expect(signal.signalType).toBe('HIRING');
     expect(signal.intentWeight).toBe(75);
+    expect(signal.evidenceClassification).toBe('USER_PROVIDED');
+    expect(signal.sourceQuality).toBe(1);
     expect(signal.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 

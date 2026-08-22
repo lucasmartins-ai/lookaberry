@@ -5,6 +5,7 @@ import { registerEnrichmentTool } from './tools/enrichment.js';
 import { registerPersonalizationTool } from './tools/personalization.js';
 import { registerOutreachTool } from './tools/outreach.js';
 import { registerAnalyticsTools } from './tools/analytics.js';
+import { registerDecisionTool } from './tools/decision.js';
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -18,6 +19,7 @@ export function createMcpServer(): McpServer {
   registerPersonalizationTool(server);
   registerOutreachTool(server);
   registerAnalyticsTools(server);
+  registerDecisionTool(server);
 
   return server;
 }

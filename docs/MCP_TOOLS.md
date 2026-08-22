@@ -8,7 +8,7 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ---
 
-## 2. Catálogo Detalhado das 8 Tools
+## 2. Catálogo Detalhado das 9 Tools
 
 ### Tool 1: `gtm_analyze_icp` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Extrai a proposta de valor de uma empresa a partir do seu website e gera o perfil do ICP com personas, dores e embeddings vetoriais (1536 dimensões).
@@ -143,7 +143,55 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ---
 
-### Tool 4: `gtm_waterfall_enrich_lead`
+### Tool 4: `gtm_evaluate_opportunity` `[STATUS: ✅ OPERACIONAL / S3]`
+- **Descrição**: Avalia oportunidades de prospecção combinando sinais ativos, evidências, fit de ICP e senioridade do lead. Retorna score, urgência, WHY_NOW e ações recomendadas de forma determinística (sem LLM).
+- **Quando usar**: Antes de iniciar outreach, para decidir quais leads priorizar e com qual mensagem.
+- **Otimização de tokens**: **0 tokens de LLM consumidos**. O pipeline é 100% determinístico com regras locais.
+
+```json
+// Input Schema
+{
+  "type": "object",
+  "properties": {
+    "icp_id": { "type": "string", "format": "uuid", "description": "ID do perfil de ICP" },
+    "lead_id": { "type": "string", "format": "uuid", "description": "Avaliar um lead específico (opcional)" },
+    "company_id": { "type": "string", "format": "uuid", "description": "Avaliar uma empresa específica (opcional)" },
+    "min_weight": { "type": "number", "default": 50, "description": "Peso mínimo do sinal para consideração" }
+  },
+  "required": ["icp_id"]
+}
+
+// Output Schema
+{
+  "type": "object",
+  "properties": {
+    "evaluated": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "lead_id": { "type": "string", "format": "uuid" },
+          "company_id": { "type": "string", "format": "uuid" },
+          "company_name": { "type": "string" },
+          "score": { "type": "number", "description": "0-100 opportunity score" },
+          "urgency": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+          "top_factors": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "contribution": { "type": "number" }, "evidence": { "type": "string" }, "evidence_classification": { "type": "string" } } } },
+          "why_now": { "type": "array", "items": { "type": "string" } },
+          "recommended_actions": { "type": "array", "items": { "type": "object", "properties": { "channel": { "type": "string" }, "timing": { "type": "string" }, "template": { "type": "string" }, "rationale": { "type": "string" } } } },
+          "signal_summary": { "type": "object", "properties": { "active_signal_count": { "type": "number" }, "top_signal_types": { "type": "array" }, "latest_signal_age_hours": { "type": "number" }, "evidence_strength": { "type": "number" } } },
+          "icp_fit": { "type": "number" }
+        }
+      }
+    },
+    "evaluated_at": { "type": "string", "format": "date-time" },
+    "total_candidates": { "type": "number" }
+  }
+}
+```
+
+---
+
+### Tool 5: `gtm_waterfall_enrich_lead`
 - `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Executa o enriquecimento em cascata (Cache Local -> Apollo -> Dropcontact -> MX/ZeroBounce) para obter dados válidos.
 - **Quando usar**: Quando um lead pontuado com alto score precisa de e-mail verificado antes do outreach.
@@ -184,7 +232,7 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 - O worker BullMQ `waterfall_enrichment_queue` executa até 5 jobs em concorrência, 10 jobs por segundo, com 3 tentativas e backoff exponencial de 1 segundo.
 - A validação padrão faz preflight MX. A integração ZeroBounce autenticada permanece um ponto de configuração para produção.
 
-### Tool 5: `gtm_generate_hyper_personalized_message` `[STATUS: ✅ OPERACIONAL]`
+### Tool 6: `gtm_generate_hyper_personalized_message` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Gera o hook e o corpo da mensagem combinando de forma cirúrgica o lead, seu cargo, o sinal ativo e a dor do ICP.
 - **Quando usar**: Imediatamente antes de disparar uma mensagem ou conexão personalizada.
 - **Otimização de tokens**: Prompt Caching no system prompt via `cache_control: ephemeral`. Apenas o payload condensado do lead e do sinal são enviados no input dinâmico.
@@ -217,7 +265,7 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ---
 
-### Tool 6: `gtm_schedule_outreach_sequence` `[STATUS: ✅ OPERACIONAL]`
+### Tool 7: `gtm_schedule_outreach_sequence` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Agenda uma cadência multicanal por lote de leads, persistindo a máquina de estados e a próxima etapa.
 - **Quando usar**: Depois do enriquecimento e da aprovação das mensagens pelo agente.
 - **Otimização de tokens**: Operação transacional de banco e fila (0 tokens de LLM).
@@ -267,7 +315,7 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ---
 
-### Tool 7: `gtm_track_campaign_metrics` `[STATUS: ✅ OPERACIONAL]`
+### Tool 8: `gtm_track_campaign_metrics` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Retorna métricas consolidadas em tempo real (envios, opens, replies, taxa de resposta positiva e bounces).
 - **Quando usar**: Em rotinas de auditoria e monitoramento de campanhas.
 - **Otimização de tokens**: Agregações SQL pré-computadas em memória ou visualizações de banco (0 tokens de LLM).
@@ -305,7 +353,7 @@ O servidor MCP do LookaBerry implementa o protocolo JSON-RPC 2.0 através do `@m
 
 ---
 
-### Tool 8: `gtm_record_lead_interaction_feedback` `[STATUS: ✅ OPERACIONAL]`
+### Tool 9: `gtm_record_lead_interaction_feedback` `[STATUS: ✅ OPERACIONAL]`
 - **Descrição**: Registra uma abertura, clique, resposta ou bounce; replies podem ser classificados pelo Haiku e retroalimentam o peso do sinal de intenção associado.
 - **Quando usar**: Quando o webhook de e-mail ou LinkedIn reporta uma resposta recebida.
 - **Otimização de tokens**: Classificação rápida via Haiku com schema booleano estruturado.

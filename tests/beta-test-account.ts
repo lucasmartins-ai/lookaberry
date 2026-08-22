@@ -265,7 +265,7 @@ async function runBetaTest() {
 
   const sampleDelay = sampleHumanDelaySeconds();
   const antiBanCheck = applyAntiBanPolicy({
-    channel: 'EMAIL',
+    channel: 'email',
     sentToday: testAccount.sentToday,
     dailyLimit: testAccount.dailyLimit,
     pausedUntil: null,

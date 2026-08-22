@@ -1,17 +1,36 @@
 import { prisma } from '../../db/client.js';
+import { outreachQueue } from '../queues/queue.js';
 import {
   ScheduleOutreachSequenceInputSchema,
   type ScheduleOutreachSequenceInput,
   type ScheduleOutreachSequenceOutput,
 } from '../../mcp/schemas/outreach.js';
+import { channelRegistry } from '../channels/registry.js';
+import { legacyChannelToChannelId } from '../channels/types.js';
+import type { ChannelId } from '../channels/types.js';
+import type { ExecutionContext, ExecutionResult } from '../execution/types.js';
+import type { RecommendedAction } from '../decision/types.js';
 
 type Channel = 'LINKEDIN_CONNECT' | 'LINKEDIN_MESSAGE' | 'EMAIL';
+
+/** Map ChannelId back to the legacy ChannelType enum for Prisma compatibility */
+function channelIdToLegacy(channelId: ChannelId): Channel {
+  switch (channelId) {
+    case 'linkedin':
+      return 'LINKEDIN_MESSAGE';
+    case 'email':
+      return 'EMAIL';
+    case 'whatsapp':
+    case 'manual':
+      return 'MANUAL_TASK' as Channel;
+  }
+}
 
 export interface OutreachRepository {
   createSequence(input: {
     campaignId: string;
     leadIds: string[];
-    steps: Array<{ channel: Channel; delayHours: number; promptTemplate: string }>;
+    steps: Array<{ channel: ChannelId; delayHours: number; promptTemplate: string }>;
     nextRunAt: Date;
   }): Promise<{ id: string; status: 'ACTIVE' | 'PAUSED' | 'COMPLETED'; nextStep: number }>;
 }
@@ -27,7 +46,7 @@ const prismaRepository: OutreachRepository = {
           create: input.steps.map((step, index) => ({
             campaign: { connect: { id: input.campaignId } },
             stepOrder: index,
-            channel: step.channel,
+            channel: channelIdToLegacy(step.channel),
             delayHours: step.delayHours,
             promptTemplate: step.promptTemplate,
           })),
@@ -40,7 +59,7 @@ const prismaRepository: OutreachRepository = {
 };
 
 export interface AntiBanInput {
-  channel: Channel;
+  channel: ChannelId;
   sentToday: number;
   dailyLimit: number;
   pausedUntil: Date | null;
@@ -48,11 +67,14 @@ export interface AntiBanInput {
 }
 
 export function applyAntiBanPolicy(input: AntiBanInput, now = new Date()) {
-  const isLinkedIn = input.channel !== 'EMAIL';
+  const profile = channelRegistry.getProfile(input.channel);
+  const safetyPauseMs = profile?.safetyPauseMs ?? 24 * 60 * 60 * 1_000;
+  const isBrowserChannel = profile?.requiresBrowser ?? false;
+
   const providerError = input.providerError?.toUpperCase() ?? '';
-  if (isLinkedIn && (providerError.includes('CAPTCHA') || providerError.includes('429'))) {
-    const pausedUntil = new Date(now.getTime() + 48 * 60 * 60 * 1000);
-    return { allowed: false, reason: 'LinkedIn account paused after provider safety signal', pausedUntil };
+  if (isBrowserChannel && (providerError.includes('CAPTCHA') || providerError.includes('429'))) {
+    const pausedUntil = new Date(now.getTime() + safetyPauseMs);
+    return { allowed: false, reason: `${input.channel} account paused after provider safety signal`, pausedUntil };
   }
   if (input.pausedUntil && input.pausedUntil > now) {
     return { allowed: false, reason: 'Account is paused', pausedUntil: input.pausedUntil };
@@ -98,20 +120,54 @@ export class OutreachService {
 
   async scheduleSequence(rawInput: ScheduleOutreachSequenceInput): Promise<ScheduleOutreachSequenceOutput> {
     const input = ScheduleOutreachSequenceInputSchema.parse(rawInput);
-    if (!input.steps.some(step => step.channel !== 'EMAIL')) throw new Error('Sequence must contain a LinkedIn step');
-    if (!input.steps.some(step => step.channel === 'EMAIL')) throw new Error('Sequence must contain an Email step');
+
+    // Convert legacy channel values to ChannelId
+    const normalizedSteps = input.steps.map(step => ({
+      ...step,
+      channel: legacyChannelToChannelId(step.channel) as ChannelId,
+    }));
+
+    // Validate: at least one LinkedIn step and one Email step
+    if (!normalizedSteps.some(step => step.channel === 'linkedin')) {
+      throw new Error('Sequence must contain a LinkedIn step');
+    }
+    if (!normalizedSteps.some(step => step.channel === 'email')) {
+      throw new Error('Sequence must contain an Email step');
+    }
+
+    // Validate each step's channel is known to the registry
+    for (const step of normalizedSteps) {
+      if (!channelRegistry.isKnown(step.channel)) {
+        throw new Error(`Unknown channel: ${step.channel}`);
+      }
+      // Validate the channel supports at least sendMessage or connect capabilities
+      if (!channelRegistry.can(step.channel, 'sendMessage') && !channelRegistry.can(step.channel, 'connect')) {
+        throw new Error(`Channel ${step.channel} does not support outreach actions`);
+      }
+    }
 
     const runAt = nextRunAt(input.start_at);
     const sequence = await this.repository.createSequence({
       campaignId: input.campaign_id,
       leadIds: input.lead_ids,
-      steps: input.steps.map(step => ({
+      steps: normalizedSteps.map(step => ({
         channel: step.channel,
         delayHours: step.delay_hours,
         promptTemplate: step.prompt_template,
       })),
       nextRunAt: runAt,
     });
+    // Enqueue the first step in the BullMQ dispatcher queue
+    try {
+      await Promise.race([
+        outreachQueue.add('dispatch', { sequenceId: sequence.id }, { delay: 0 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Queue add timed out')), 3000)),
+      ]);
+    } catch (err) {
+      // Graceful degradation: if Redis is down, scheduling succeeds but dispatch is deferred
+      console.warn('[OutreachService] Could not enqueue dispatch job — Redis may be unavailable:', err instanceof Error ? err.message : String(err));
+    }
+
     return {
       sequence_id: sequence.id,
       status: sequence.status,
@@ -119,6 +175,18 @@ export class OutreachService {
       lead_count: input.lead_ids.length,
       next_run_at: runAt.toISOString(),
     };
+  }
+
+  /**
+   * Execute a single action via the execution router.
+   * This is a convenience method for immediate execution (MCP tools, manual triggers).
+   */
+  async executeAction(
+    action: RecommendedAction,
+    context: ExecutionContext,
+    router: { execute(action: RecommendedAction, context: ExecutionContext): Promise<ExecutionResult> },
+  ): Promise<ExecutionResult> {
+    return router.execute(action, context);
   }
 }
 

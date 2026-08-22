@@ -31,21 +31,21 @@ Ao final de **cada Sprint**, o sistema possui um conjunto utilizável e testáve
 
 ---
 
-### Sprint 2: Ingestão de Sinais de Intenção e Hybrid Scoring Engine `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
-- **Objetivo**: Implementar a captura de sinais e o algoritmo de ranqueamento híbrido de leads sem custo de tokens LLM.
-- **O que construir**:
-  - Pipeline de ingestão e normalização de sinais de intenção (`HIRING`, `FUNDING`, `TECH_INSTALL`).
-  - Motor de busca híbrida no PostgreSQL: Vetorial (`vector_cosine_ops`) + Ponderação de Intent Score.
-  - Tool MCP `gtm_detect_intent_signals`.
-  - Tool MCP `gtm_score_and_rank_leads`.
-- **Tools MCP Ativas ao Final da Sprint**:
-  - `gtm_analyze_icp`
-  - `gtm_detect_intent_signals`
-  - `gtm_score_and_rank_leads`
-- **Critérios de Aceite (Done)**:
-  - Banco é capaz de ordenar 10.000 leads em menos de 50ms com zero tokens gastos.
-- **Complexidade**: Média (3 dias).
-- **Riscos Técnicos**: Dispersão de pontuação $\rightarrow$ *Mitigação*: Normalização com pesos de 0 a 100 e janela TTL de expiração.
+### Sprint 2: Intent Intelligence 2.0 `[STATUS: ✅ IMPLEMENTADO / PERSISTÊNCIA PENDENTE DE EXECUÇÃO LOCAL]`
+- **Objetivo**: Evoluir a ingestão legada para providers extensíveis e scoring determinístico com proveniência.
+- **Implementado**:
+  - Contrato `SignalProvider` separando coleta, normalização, classificação, confiança, persistência e scoring.
+  - Providers locais para mudanças de website, hiring e anúncios públicos; funding API permanece `REQUIRES_CREDENTIALS`.
+  - `IntentSignal` com provider, URL, observação, expiração, confiança, qualidade da fonte, classificação, dados normalizados/sanitizados, custo, hash e deduplicação.
+  - Reuso de `Source` e `CompanyEvidence` da S1.
+  - Scoring SQL determinístico por recência/TTL, confiança, qualidade, tipo, classificação, peso e duplicidade.
+  - Compatibilidade aditiva das tools `gtm_detect_intent_signals` e `gtm_score_and_rank_leads`.
+- **Testes**: providers válidos/indisponíveis, timeout, falha, partial failure, custo, TTL, classificação, deduplicação, ranking determinístico e contratos MCP.
+- **Verificação pendente**: migration S2, persistência e ranking PostgreSQL não foram executados porque PostgreSQL `127.0.0.1:5433` e Redis `localhost:6379` não estavam disponíveis.
+- **Limitação**: o fallback determinístico de embeddings é offline e não representa similaridade semântica sem `OPENAI_API_KEY`.
+- **Documentação**: [INTENT_PROVIDERS.md](INTENT_PROVIDERS.md).
+- **Complexidade**: Média-Alta.
+- **Risco remanescente**: adapters pagos, crawl scheduling e workers de ingestão ainda não fazem parte desta sprint.
 
 ---
 
@@ -151,3 +151,47 @@ Ao final de **cada Sprint**, o sistema possui um conjunto utilizável e testáve
 - **Código**: `src/core/analytics/service.ts`, `src/api/routes/webhooks.ts`, schemas de analytics/webhook, tools MCP e `prisma/migrations/3_sprint6_analytics/migration.sql`.
 - **Verificação**: `tests/unit/analytics.test.ts` cobre limites de peso, limiar de revisão humana e registro explícito de feedback.
 - **Limite conhecido**: o payload do webhook é um contrato interno normalizado; adaptadores específicos de Smartlead, Resend e Unipile ainda precisam mapear seus formatos nativos.
+
+---
+
+## 3. Addendum GTM Brain 2.0
+
+### S1: Entity + Evidence Graph `[STATUS: ✅ IMPLEMENTADO / PERSISTÊNCIA PENDENTE DE EXECUÇÃO LOCAL]`
+
+- **Implementado**: `Source`, `Person`, `Identity`, `CompanyEvidence`, `PersonEvidence`, `Observation`, `Relationship` e `Interaction` no Prisma/PostgreSQL.
+- **Compatibilidade**: `Lead.personId` conecta o modelo legado a `Person`; os campos existentes de lead não foram removidos.
+- **Proveniência**: evidências exigem `sourceId`, `observedAt`, `confidence`, `classification`, dados normalizados e TTL opcional (`expiresAt`).
+- **Classificação**: `FACT`, `INFERENCE`, `LLM_INFERENCE`, `USER_PROVIDED`, `UNVERIFIED`.
+- **Proteção de dados**: `rawData` é sanitizado, campos sensíveis são redigidos e `contentHash` é calculado com SHA-256.
+- **Reconciliação**: `total_priority_score` deixa de ser coluna gerada na migration S1 e passa a ser coluna comum, alinhada ao `schema.prisma` e ao seed. A fórmula de ranking continua no SQL do Intent Engine.
+- **Código**: `src/core/evidence/service.ts`, `prisma/schema.prisma` e `prisma/migrations/4_sprint1_entity_evidence_graph/migration.sql`.
+- **Testes**: `tests/unit/evidence.test.ts` cobre sanitização, confiança, hash e contrato de persistência; `tests/integration/evidence.test.ts` cobre o caminho PostgreSQL.
+- **Verificação histórica da S1**: `prisma validate`, `prisma generate`, `npx tsc --noEmit` e `npm run build` passaram; a suíte unitária atual da S1/S2 tem 39 testes. O teste de persistência não foi executado porque PostgreSQL/Redis não estavam disponíveis.
+- **Limitação real**: a migration S1 foi revisada para PostgreSQL 16 e foreign keys idempotentes, mas ainda não foi aplicada neste ambiente. O cleanup do teste respeita `Person`/evidências antes de remover a `Source`.
+
+### S2: Intent Intelligence 2.0 `[STATUS: ✅ IMPLEMENTADO / PERSISTÊNCIA PENDENTE DE EXECUÇÃO LOCAL]`
+
+- **IMPLEMENTED**: contrato e runner de providers; website changes por snapshot/URL pública; hiring por postings/HTML/URL pública; anúncios públicos por itens/HTML/URL pública; normalização, TTL, confiança, classificação, sanitização, hash, custo e deduplicação.
+- **PARTIALLY IMPLEMENTED**: coleta de URLs públicas depende de rede e de input válido; não existe histórico de snapshots ou worker de ingestão agendado.
+- **REQUIRES CREDENTIALS**: provider de funding API é somente uma fronteira explícita, sem integração paga conectada.
+- **NOT IMPLEMENTED**: dezenas de integrações externas, LinkedIn autenticado, APIs pagas, ranking semântico offline e pipeline de filas para sinais.
+- **Compatibilidade**: inputs legados das duas tools MCP continuam aceitos; campos novos são aditivos.
+- **Verificação**: 39 testes unitários passam; typecheck, build e Prisma validate passam. PostgreSQL/Redis impediram migration, integração, persistência e ranking real.
+
+### S3: Decision & Reasoning Engine `[STATUS: ✅ IMPLEMENTADO / TESTADO]`
+
+- **IMPLEMENTED**: `DecisionEngine` determinístico no `src/core/decision/`, sem LLM.
+  - `OpportunityScore` com lead, company, score, urgency, top factors, whyNow, recommended actions e signal summary.
+  - Pipeline de score: signal score (40%) + evidence strength (25%) + ICP fit (20%) + lead seniority match (15%).
+  - Urgency (`HIGH` / `MEDIUM` / `LOW`) baseada em recência, peso e classificação do melhor sinal.
+  - `DecisionFactor` com nome, contribuição, evidência de suporte e classificação.
+  - `WHY_NOW` com justificativas por tipo de sinal (hiring → expansão, funding → novo orçamento, etc.).
+  - `RecommendedAction` com canal, timing, template interpolado e rationale.
+  - Classificação de senioridade (C-Level > VP > Director > Manager) e de função de compra (Sales > Engineering > HR).
+- **MCP tool**: `gtm_evaluate_opportunity` avalia um lead, uma empresa ou todos os leads ativos.
+  - Persistência: consulta `intent_signals` ativos + `company_evidence` + `companies` para ICP fit via `pgvector`.
+  - Schema Zod em `src/mcp/schemas/decision.ts`.
+- **Compatibilidade**: contratos S1 e S2 preservados; `scoring.ts` reutilizado para recência de sinais.
+- **Verificação**: 30 testes unitários novos passam (total 69 em 13 arquivos). Typecheck, build e Prisma validate passam.
+- **Limitação operacional**: ranking e persistência PostgreSQL aguardam infra local (`127.0.0.1:5433`). O teste de integração futuro deve validar `evaluateOpportunity` contra dados reais.
+- **Documentação**: este arquivo, `docs/IMPLEMENTATION_STATUS.md` e `docs/ARCHITECTURE.md`.

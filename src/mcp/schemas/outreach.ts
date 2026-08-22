@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-export const OutreachChannelSchema = z.enum(['LINKEDIN_CONNECT', 'LINKEDIN_MESSAGE', 'EMAIL']);
+export const OutreachChannelSchema = z.enum([
+  'LINKEDIN_CONNECT', 'LINKEDIN_MESSAGE', 'EMAIL',   // legacy
+  'linkedin', 'email', 'whatsapp', 'manual',           // S4 ChannelId
+]);
 
 export const ScheduleOutreachSequenceInputSchema = z.object({
   campaign_id: z.string().uuid(),

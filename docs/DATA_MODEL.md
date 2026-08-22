@@ -4,11 +4,11 @@
 
 ## 1. Visão Geral
 
-O LookaBerry adota o **PostgreSQL 16** com a extensão **`pgvector`** como a sua fonte única de dados relacionais e vetoriais. Essa abordagem elimina a sobrecarga de sincronização dual-write com bancos vetoriais dedicados e garante consistência transacional ACID em todas as operações de GTM.
+O LookaBerry adota o **PostgreSQL 16** com a extensão **`pgvector`** como a sua fonte única de dados relacionais e vetoriais. Essa abordagem elimina a sobrecarga de sincronização dual-write com bancos vetoriais dedicados e garante consistência transacional ACID em todas as operações de GTM. O DDL abaixo é uma referência histórica resumida; o contrato executável é `prisma/schema.prisma` e as migrations versionadas.
 
 ---
 
-## 2. Schema DDL Completo (SQL)
+## 2. Schema DDL de Referência (SQL)
 
 ```sql
 -- Habilita extensões necessárias
@@ -73,12 +73,26 @@ CREATE TABLE companies (
 CREATE TABLE intent_signals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    signal_type VARCHAR(100) NOT NULL, -- 'HIRING', 'FUNDING', 'TECH_INSTALL', 'LEADERSHIP_CHANGE', 'CONTENT_ENGAGEMENT'
-    source VARCHAR(100) NOT NULL, -- 'LINKEDIN', 'G2', 'NEWS', 'GITHUB', 'JOB_BOARD'
+    provider_id VARCHAR(100),
+    source_id UUID REFERENCES sources(id) ON DELETE SET NULL,
+    company_evidence_id UUID REFERENCES company_evidence(id) ON DELETE SET NULL,
+    signal_type VARCHAR(100) NOT NULL,
+    source VARCHAR(100) NOT NULL,
+    source_url VARCHAR(1000),
     title VARCHAR(500) NOT NULL,
     raw_payload JSONB DEFAULT '{}',
+    normalized_data JSONB NOT NULL DEFAULT '{}',
+    metadata JSONB NOT NULL DEFAULT '{}',
     summary TEXT NOT NULL,
-    intent_weight NUMERIC(5,2) NOT NULL DEFAULT 50.00, -- 0 a 100
+    intent_weight NUMERIC(5,2) NOT NULL DEFAULT 50.00,
+    confidence NUMERIC(5,4) NOT NULL DEFAULT 1.0000,
+    source_quality NUMERIC(5,4) NOT NULL DEFAULT 0.5000,
+    cost NUMERIC(8,4) NOT NULL DEFAULT 0.0000,
+    evidence_classification evidence_classification_enum NOT NULL DEFAULT 'UNVERIFIED',
+    content_hash VARCHAR(128),
+    deduplication_key VARCHAR(255),
+    observed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    ttl_days INTEGER NOT NULL DEFAULT 30,
     detected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
@@ -106,7 +120,7 @@ CREATE TABLE leads (
     location VARCHAR(255),
     icp_score NUMERIC(5,2) DEFAULT 0.00,
     intent_score NUMERIC(5,2) DEFAULT 0.00,
-    total_priority_score NUMERIC(5,2) GENERATED ALWAYS AS (icp_score * 0.4 + intent_score * 0.6) STORED,
+    total_priority_score NUMERIC(5,2), -- persistida; o ranking atual é calculado explicitamente em SQL
     status lead_status_enum DEFAULT 'DISCOVERED',
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -225,9 +239,31 @@ CREATE INDEX idx_companies_embedding ON companies USING hnsw (embedding vector_c
 
 ---
 
-## 3. Query Exemplar de Busca Híbrida (Vector + Rules)
+## 3. Evidence Graph (S1)
 
-A query abaixo executa o ranqueamento de leads sem qualquer custo de inferência em LLM:
+A S1 adiciona um grafo relacional de entidades e evidências sem introduzir um banco separado. Os novos modelos são `Source`, `Person`, `Identity`, `CompanyEvidence`, `PersonEvidence`, `Observation`, `Relationship` e `Interaction`. `Lead.person_id` conecta o modelo legado a `Person` sem remover os campos existentes de contato.
+
+Toda `CompanyEvidence` e `PersonEvidence` exige `source_id`, `observed_at`, `classification`, `confidence` e `normalized_data`. `expires_at` representa o TTL da evidência. `raw_data` é opcional e passa por sanitização antes da persistência; credenciais, tokens, cookies e chaves de sessão são redigidos. `content_hash` registra um SHA-256 do payload sanitizado.
+
+`EvidenceClassification` distingue `FACT`, `INFERENCE`, `LLM_INFERENCE`, `USER_PROVIDED` e `UNVERIFIED`. Inferências não são tratadas como fatos automaticamente.
+
+A migration `4_sprint1_entity_evidence_graph` também reconcilia `leads.total_priority_score`: a migration inicial criava uma coluna `GENERATED`, enquanto o Prisma schema e o seed tratavam a coluna como persistida. A S1 converte a coluna para uma coluna comum e mantém o scoring calculado explicitamente pela query do Intent Engine.
+
+Consulte [EVIDENCE_MODEL.md](EVIDENCE_MODEL.md) para o contrato de proveniência e sanitização.
+
+---
+
+## 4. Intent Intelligence 2.0 (S2)
+
+A S2 mantém `IntentSignal` compatível com os campos legados e adiciona proveniência extensível: `provider_id`, `source_id`, `source_url`, `observed_at`, `expires_at`, `confidence`, `source_quality`, `evidence_classification`, `normalized_data`, `raw_payload` sanitizado, `metadata`, `cost`, `content_hash` e `deduplication_key`. `Source` e `CompanyEvidence` são reutilizados; não há banco gráfico separado.
+
+A migration `5_sprint2_intent_providers` faz backfill de `observed_at`, `provider_id` e da chave de deduplicação para sinais antigos, preserva os payloads legados e adiciona as foreign keys/indexes necessários. A migration não foi executada neste ambiente porque PostgreSQL não estava disponível.
+
+Os providers públicos iniciais são documentados em [INTENT_PROVIDERS.md](INTENT_PROVIDERS.md). `FACT`, `INFERENCE`, `LLM_INFERENCE`, `USER_PROVIDED` e `UNVERIFIED` permanecem distintos no armazenamento e no score.
+
+## 5. Query Exemplar de Busca Híbrida (Vector + Rules)
+
+A query abaixo é uma forma resumida do ranqueamento sem qualquer custo de inferência em LLM. A implementação real usa CTEs em `src/core/intent/service.ts` para aplicar recência, confiança, qualidade da fonte, classificação e deduplicação:
 
 ```sql
 SELECT 

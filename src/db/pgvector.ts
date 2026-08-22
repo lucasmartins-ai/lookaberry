@@ -45,3 +45,12 @@ export async function setCompanyEmbedding(companyId: string, embedding: number[]
     companyId
   );
 }
+
+export async function setCompanyEmbeddingIfMissing(companyId: string, embedding: number[]): Promise<void> {
+  const vectorStr = vectorToString(embedding);
+  await prisma.$executeRawUnsafe(
+    `UPDATE companies SET embedding = $1::vector, updated_at = NOW() WHERE id = $2::uuid AND embedding IS NULL`,
+    vectorStr,
+    companyId
+  );
+}
