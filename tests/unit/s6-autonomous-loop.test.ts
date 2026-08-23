@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { SequenceScheduler } from '../../src/core/execution/scheduler.js';
 import { classifySentiment, processReply, type InboxJobData } from '../../src/core/execution/inboxWorker.js';
-import { adjustIntentWeight, scheduleDeliveryVerification, handlePostSendFeedback } from '../../src/core/execution/feedbackLoop.js';
+import { adjustIntentWeight, markMessageEngagement, scheduleDeliveryVerification, handlePostSendFeedback } from '../../src/core/execution/feedbackLoop.js';
 import type { ExecutionResult } from '../../src/core/execution/types.js';
 
 // ─── Mock helpers ───
@@ -486,6 +486,30 @@ describe('processReply', () => {
 });
 
 // ─── FeedbackLoop tests ───
+
+describe('message engagement tracking', () => {
+  it('updates openedAt on OPEN feedback for the branching engine', async () => {
+    const mockPrisma = makeMockPrisma();
+
+    await markMessageEngagement('msg-open', 'OPEN', { _prisma: mockPrisma as any });
+
+    expect(mockPrisma.outreachMessage.update).toHaveBeenCalledWith({
+      where: { id: 'msg-open' },
+      data: { openedAt: expect.any(Date) },
+    });
+  });
+
+  it('updates clickedAt on CLICK feedback for the branching engine', async () => {
+    const mockPrisma = makeMockPrisma();
+
+    await markMessageEngagement('msg-click', 'CLICK', { _prisma: mockPrisma as any });
+
+    expect(mockPrisma.outreachMessage.update).toHaveBeenCalledWith({
+      where: { id: 'msg-click' },
+      data: { clickedAt: expect.any(Date) },
+    });
+  });
+});
 
 describe('adjustIntentWeight', () => {
   it('adds 5 for POSITIVE sentiment', () => {

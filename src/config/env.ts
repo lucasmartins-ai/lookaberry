@@ -23,7 +23,7 @@ const envSchema = z.object({
   API_KEYS: z.string().default(''),
   ELEVATED_API_KEYS: z.string().default(''),
   WEBHOOK_SECRET: z.string().default(''),
-  CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:5173'),
+  CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:3001,http://localhost:5173'),
   RATE_LIMIT_DEFAULT_RPM: z.coerce.number().default(100),
   RATE_LIMIT_ELEVATED_RPM: z.coerce.number().default(300),
   RATE_LIMIT_WEBHOOK_RPM: z.coerce.number().default(600),

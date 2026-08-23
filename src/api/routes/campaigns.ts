@@ -7,6 +7,26 @@ import { config as envConfig } from '../../config/env.js';
 // ─── Campaign Analytics ───
 
 export async function campaignRoutes(app: FastifyInstance) {
+  /** List campaigns for dashboard navigation and overview. */
+  app.get('/api/v1/campaigns', async (request, reply) => {
+    try {
+      const campaigns = await prisma.campaign.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, name: true, isActive: true, createdAt: true },
+      });
+
+      return reply.status(200).send(campaigns.map(campaign => ({
+        id: campaign.id,
+        name: campaign.name,
+        is_active: campaign.isActive,
+        created_at: campaign.createdAt,
+      })));
+    } catch (err) {
+      app.log.error(err instanceof Error ? err : new Error(String(err)));
+      return reply.status(500).send({ error: 'Failed to fetch campaigns' });
+    }
+  });
+
   /**
    * GET /api/v1/campaigns/:id/analytics
    * Aggregate stats: sent, delivered, opened, clicked, replied, bounced, failed, pending
@@ -15,6 +35,11 @@ export async function campaignRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
 
     try {
+      const campaign = await prisma.campaign.findUnique({
+        where: { id },
+        select: { name: true },
+      });
+
       // Count by message status
       const statusGroups = await prisma.outreachMessage.groupBy({
         by: ['status'],
@@ -26,6 +51,55 @@ export async function campaignRoutes(app: FastifyInstance) {
       for (const g of statusGroups) {
         counts[g.status] = g._count.id;
       }
+
+      // Funnel stages are cumulative: later engagement stages remain included
+      // in the earlier stages even though the message status is updated in place.
+      const [sentCount, deliveredCount, openedCount, clickedCount, repliedCount] = await Promise.all([
+        prisma.outreachMessage.count({
+          where: {
+            campaignId: id,
+            OR: [
+              { sentAt: { not: null } },
+              { status: { in: ['SENT', 'DELIVERED', 'OPENED', 'CLICKED', 'REPLIED', 'BOUNCED'] } },
+            ],
+          },
+        }),
+        prisma.outreachMessage.count({
+          where: {
+            campaignId: id,
+            OR: [
+              { status: { in: ['DELIVERED', 'OPENED', 'CLICKED', 'REPLIED'] } },
+              { openedAt: { not: null } },
+              { clickedAt: { not: null } },
+              { repliedAt: { not: null } },
+            ],
+          },
+        }),
+        prisma.outreachMessage.count({
+          where: {
+            campaignId: id,
+            OR: [
+              { status: { in: ['OPENED', 'CLICKED', 'REPLIED'] } },
+              { openedAt: { not: null } },
+            ],
+          },
+        }),
+        prisma.outreachMessage.count({
+          where: {
+            campaignId: id,
+            OR: [
+              { status: { in: ['CLICKED', 'REPLIED'] } },
+              { clickedAt: { not: null } },
+            ],
+          },
+        }),
+        prisma.outreachMessage.count({
+          where: {
+            campaignId: id,
+            OR: [{ status: 'REPLIED' }, { repliedAt: { not: null } }],
+          },
+        }),
+      ]);
 
       // Count by channel
       const channelGroups = await prisma.outreachMessage.groupBy({
@@ -41,11 +115,12 @@ export async function campaignRoutes(app: FastifyInstance) {
 
       return reply.status(200).send({
         campaign_id: id,
-        sent: counts.SENT ?? 0,
-        delivered: counts.DELIVERED ?? 0,
-        opened: counts.OPENED ?? 0,
-        clicked: counts.CLICKED ?? 0,
-        replied: counts.REPLIED ?? 0,
+        campaign_name: campaign?.name ?? null,
+        sent: sentCount,
+        delivered: deliveredCount,
+        opened: openedCount,
+        clicked: clickedCount,
+        replied: repliedCount,
         bounced: counts.BOUNCED ?? 0,
         failed: counts.FAILED ?? 0,
         pending: (counts.QUEUED ?? 0) + (counts.SCHEDULED ?? 0),
@@ -54,6 +129,52 @@ export async function campaignRoutes(app: FastifyInstance) {
     } catch (err) {
       app.log.error(err instanceof Error ? err : new Error(String(err)));
       return reply.status(500).send({ error: 'Failed to fetch analytics' });
+    }
+  });
+
+  /** Recent messages for the campaign detail table. */
+  app.get('/api/v1/campaigns/:id/messages', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const rawLimit = Number((request.query as { limit?: string }).limit ?? 25);
+    const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, Math.floor(rawLimit))) : 25;
+
+    try {
+      const messages = await prisma.outreachMessage.findMany({
+        where: { campaignId: id },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          channel: true,
+          status: true,
+          subject: true,
+          body: true,
+          sentAt: true,
+          openedAt: true,
+          clickedAt: true,
+          repliedAt: true,
+          createdAt: true,
+          lead: { select: { fullName: true, email: true } },
+        },
+      });
+
+      return reply.status(200).send(messages.map(message => ({
+        id: message.id,
+        lead_name: message.lead.fullName,
+        lead_email: message.lead.email,
+        channel: message.channel,
+        status: message.status,
+        subject: message.subject,
+        body_preview: message.body.slice(0, 180),
+        sent_at: message.sentAt,
+        opened_at: message.openedAt,
+        clicked_at: message.clickedAt,
+        replied_at: message.repliedAt,
+        created_at: message.createdAt,
+      })));
+    } catch (err) {
+      app.log.error(err instanceof Error ? err : new Error(String(err)));
+      return reply.status(500).send({ error: 'Failed to fetch campaign messages' });
     }
   });
 

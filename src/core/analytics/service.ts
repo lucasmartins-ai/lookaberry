@@ -92,7 +92,16 @@ const prismaRepository: AnalyticsRepository = {
 
       if (input.message_id) {
         const status = input.interaction_type === 'OPEN' ? 'OPENED' : input.interaction_type === 'CLICK' ? 'CLICKED' : input.interaction_type === 'REPLY' ? 'REPLIED' : 'BOUNCED';
-        const message = await tx.outreachMessage.update({ where: { id: input.message_id }, data: { status, ...(input.interaction_type === 'REPLY' ? { repliedAt: new Date(), replySentiment: sentiment.sentiment } : {}) }, select: { signalId: true } });
+        const message = await tx.outreachMessage.update({
+          where: { id: input.message_id },
+          data: {
+            status,
+            ...(input.interaction_type === 'OPEN' ? { openedAt: new Date() } : {}),
+            ...(input.interaction_type === 'CLICK' ? { clickedAt: new Date() } : {}),
+            ...(input.interaction_type === 'REPLY' ? { repliedAt: new Date(), replySentiment: sentiment.sentiment } : {}),
+          },
+          select: { signalId: true },
+        });
         if (input.interaction_type === 'REPLY' && message.signalId) {
           const signal = await tx.intentSignal.findUnique({ where: { id: message.signalId }, select: { intentWeight: true } });
           if (signal) await tx.intentSignal.update({ where: { id: message.signalId }, data: { intentWeight: applySignalFeedback(Number(signal.intentWeight), sentiment.sentiment) } });

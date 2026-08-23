@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { outreachQueue } from '../queues/queue.js';
 import {
@@ -11,7 +12,7 @@ import type { ChannelId } from '../channels/types.js';
 import type { ExecutionContext, ExecutionResult } from '../execution/types.js';
 import type { RecommendedAction } from '../decision/types.js';
 
-type Channel = 'LINKEDIN_CONNECT' | 'LINKEDIN_MESSAGE' | 'EMAIL';
+type Channel = 'LINKEDIN_CONNECT' | 'LINKEDIN_MESSAGE' | 'EMAIL' | 'MANUAL_TASK';
 
 /** Map ChannelId back to the legacy ChannelType enum for Prisma compatibility */
 function channelIdToLegacy(channelId: ChannelId): Channel {
@@ -22,41 +23,97 @@ function channelIdToLegacy(channelId: ChannelId): Channel {
       return 'EMAIL';
     case 'whatsapp':
     case 'manual':
-      return 'MANUAL_TASK' as Channel;
+      return 'MANUAL_TASK';
   }
 }
 
-export interface OutreachRepository {
-  createSequence(input: {
-    campaignId: string;
-    leadIds: string[];
-    steps: Array<{ channel: ChannelId; delayHours: number; promptTemplate: string }>;
-    nextRunAt: Date;
-  }): Promise<{ id: string; status: 'ACTIVE' | 'PAUSED' | 'COMPLETED'; nextStep: number }>;
+export interface SequenceStepSnapshot {
+  stepOrder: number;
+  channel: Channel;
+  delayHours: number;
+  promptTemplate: string;
 }
 
-const prismaRepository: OutreachRepository = {
-  async createSequence(input) {
-    const sequence = await prisma.outreachSequence.create({
-      data: {
-        campaignId: input.campaignId,
-        nextRunAt: input.nextRunAt,
-        leads: { connect: input.leadIds.map(id => ({ id })) },
-        steps: {
-          create: input.steps.map((step, index) => ({
-            campaign: { connect: { id: input.campaignId } },
-            stepOrder: index,
-            channel: channelIdToLegacy(step.channel),
-            delayHours: step.delayHours,
-            promptTemplate: step.promptTemplate,
+function scheduleChannelToLegacy(channel: string): Channel {
+  if (channel === 'LINKEDIN_CONNECT' || channel === 'LINKEDIN_MESSAGE' || channel === 'EMAIL') {
+    return channel;
+  }
+  return channelIdToLegacy(channel as ChannelId);
+}
+
+export interface CreateSequenceInput {
+  campaignId: string;
+  leadIds: string[];
+  steps: SequenceStepSnapshot[];
+  nextRunAt: Date;
+  initialVersion: {
+    version: 1;
+    steps: SequenceStepSnapshot[];
+  };
+  leadStates: Array<{
+    leadId: string;
+    currentStepIndex: 0;
+    status: 'ACTIVE';
+  }>;
+}
+
+export interface OutreachRepository {
+  createSequence(input: CreateSequenceInput): Promise<{ id: string; status: 'ACTIVE' | 'PAUSED' | 'COMPLETED'; nextStep: number }>;
+}
+
+export function createPrismaOutreachRepository(db: typeof prisma = prisma): OutreachRepository {
+  return {
+    async createSequence(input) {
+      return db.$transaction(async tx => {
+        const sequence = await tx.outreachSequence.create({
+          data: {
+            campaignId: input.campaignId,
+            nextRunAt: input.nextRunAt,
+            leads: { connect: input.leadIds.map(id => ({ id })) },
+            steps: {
+              create: input.steps.map(step => ({
+                campaign: { connect: { id: input.campaignId } },
+                stepOrder: step.stepOrder,
+                channel: step.channel,
+                delayHours: step.delayHours,
+                promptTemplate: step.promptTemplate,
+              })),
+            },
+          },
+          select: { id: true, status: true, nextStep: true },
+        });
+
+        const version = await tx.outreachSequenceVersion.create({
+          data: {
+            sequenceId: sequence.id,
+            version: input.initialVersion.version,
+            steps: input.initialVersion.steps as unknown as Prisma.InputJsonValue,
+            changeDescription: 'Initial sequence version',
+          },
+          select: { id: true },
+        });
+
+        await tx.outreachSequence.update({
+          where: { id: sequence.id },
+          data: { currentVersionId: version.id },
+        });
+
+        await tx.leadSequenceState.createMany({
+          data: input.leadStates.map(state => ({
+            leadId: state.leadId,
+            sequenceId: sequence.id,
+            currentStepIndex: state.currentStepIndex,
+            status: state.status,
           })),
-        },
-      },
-      select: { id: true, status: true, nextStep: true },
-    });
-    return sequence;
-  },
-};
+        });
+
+        return sequence;
+      });
+    },
+  };
+}
+
+const prismaRepository = createPrismaOutreachRepository();
 
 export interface AntiBanInput {
   channel: ChannelId;
@@ -147,15 +204,26 @@ export class OutreachService {
     }
 
     const runAt = nextRunAt(input.start_at);
+    const stepSnapshot = input.steps.map((step, stepOrder) => ({
+      stepOrder,
+      channel: scheduleChannelToLegacy(step.channel),
+      delayHours: step.delay_hours,
+      promptTemplate: step.prompt_template,
+    }));
     const sequence = await this.repository.createSequence({
       campaignId: input.campaign_id,
       leadIds: input.lead_ids,
-      steps: normalizedSteps.map(step => ({
-        channel: step.channel,
-        delayHours: step.delay_hours,
-        promptTemplate: step.prompt_template,
-      })),
+      steps: stepSnapshot,
       nextRunAt: runAt,
+      initialVersion: {
+        version: 1,
+        steps: stepSnapshot,
+      },
+      leadStates: input.lead_ids.map(leadId => ({
+        leadId,
+        currentStepIndex: 0,
+        status: 'ACTIVE',
+      })),
     });
     // Enqueue the first step in the BullMQ dispatcher queue
     try {

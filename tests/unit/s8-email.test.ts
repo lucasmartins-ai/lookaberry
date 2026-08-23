@@ -502,9 +502,9 @@ describe('Email tracking endpoints', () => {
   const LEAD_ID = '00000000-0000-0000-0000-000000000002';
   const MSG_ID = '00000000-0000-0000-0000-000000000003';
 
-  async function buildTrackingApp(recordFeedback = vi.fn(), findMessage = vi.fn()) {
+  async function buildTrackingApp(recordFeedback = vi.fn(), findMessage = vi.fn(), markEngagement = vi.fn().mockResolvedValue(undefined)) {
     const app = fastify();
-    await app.register(emailTrackingRoutes, { analytics: { recordFeedback }, findMessage });
+    await app.register(emailTrackingRoutes, { analytics: { recordFeedback }, findMessage, markEngagement });
     await app.ready();
     return app;
   }
@@ -512,7 +512,8 @@ describe('Email tracking endpoints', () => {
   it('open pixel returns a GIF and records OPEN feedback', async () => {
     const recordFeedback = vi.fn().mockResolvedValue({ feedbackId: 'f1', requiresHumanReview: false });
     const findMessage = vi.fn().mockResolvedValue({ campaignId: CAMPAIGN_ID, leadId: LEAD_ID });
-    const app = await buildTrackingApp(recordFeedback, findMessage);
+    const markEngagement = vi.fn().mockResolvedValue(undefined);
+    const app = await buildTrackingApp(recordFeedback, findMessage, markEngagement);
     try {
       const res = await app.inject({ method: 'GET', url: `/api/v1/email/track/open/${MSG_ID}` });
       expect(res.statusCode).toBe(200);
@@ -528,6 +529,7 @@ describe('Email tracking endpoints', () => {
           provider: 'email',
         }),
       );
+      expect(markEngagement).toHaveBeenCalledWith(MSG_ID, 'OPEN');
     } finally {
       await app.close();
     }
@@ -536,7 +538,8 @@ describe('Email tracking endpoints', () => {
   it('click redirect 302s to the original URL and records CLICK feedback', async () => {
     const recordFeedback = vi.fn().mockResolvedValue({ feedbackId: 'f1', requiresHumanReview: false });
     const findMessage = vi.fn().mockResolvedValue({ campaignId: CAMPAIGN_ID, leadId: LEAD_ID });
-    const app = await buildTrackingApp(recordFeedback, findMessage);
+    const markEngagement = vi.fn().mockResolvedValue(undefined);
+    const app = await buildTrackingApp(recordFeedback, findMessage, markEngagement);
     try {
       const res = await app.inject({
         method: 'GET',
@@ -548,6 +551,7 @@ describe('Email tracking endpoints', () => {
       expect(recordFeedback).toHaveBeenCalledWith(
         expect.objectContaining({ message_id: MSG_ID, interaction_type: 'CLICK' }),
       );
+      expect(markEngagement).toHaveBeenCalledWith(MSG_ID, 'CLICK');
     } finally {
       await app.close();
     }

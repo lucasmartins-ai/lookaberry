@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { analyticsService } from '../../core/analytics/service.js';
 import { prisma } from '../../db/client.js';
+import { markMessageEngagement, type MessageEngagementType } from '../../core/execution/feedbackLoop.js';
 import type { RecordLeadInteractionFeedbackInput } from '../../mcp/schemas/analytics.js';
 
 const NO_CACHE_HEADERS = 'no-store, no-cache, must-revalidate, max-age=0';
@@ -30,24 +31,32 @@ export interface EmailTrackingDependencies {
   analytics?: { recordFeedback(input: RecordLeadInteractionFeedbackInput): Promise<unknown> };
   /** Injectable message lookup (tests) */
   findMessage?: (messageId: string) => Promise<MessageContext | null>;
+  /** Injectable S10 engagement timestamp writer (tests) */
+  markEngagement?: (messageId: string, interactionType: MessageEngagementType) => Promise<void>;
 }
 
 export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrackingDependencies = {}) {
   const analytics = opts.analytics ?? analyticsService;
   const findMessage = opts.findMessage ?? findMessageContext;
+  const markEngagement = opts.markEngagement ?? ((messageId: string, interactionType: MessageEngagementType) => markMessageEngagement(messageId, interactionType));
 
   /** Record an OPEN/CLICK event. Never throws — tracking must not break the pixel/redirect. */
   async function record(messageId: string, interactionType: 'OPEN' | 'CLICK'): Promise<void> {
     try {
       const msg = await findMessage(messageId);
       if (!msg) return;
-      await analytics.recordFeedback({
+      const feedback = analytics.recordFeedback({
         campaign_id: msg.campaignId,
         lead_id: msg.leadId,
         message_id: messageId,
         interaction_type: interactionType,
         provider: 'email',
       });
+      const engagement = markEngagement(messageId, interactionType);
+      const results = await Promise.allSettled([feedback, engagement]);
+      for (const result of results) {
+        if (result.status === 'rejected') throw result.reason;
+      }
     } catch (err) {
       app.log.warn(
         { err: err instanceof Error ? err.message : String(err) },

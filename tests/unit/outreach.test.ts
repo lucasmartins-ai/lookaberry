@@ -5,6 +5,7 @@ import {
   advanceSequenceState,
   sampleHumanDelaySeconds,
   type OutreachRepository,
+  createPrismaOutreachRepository,
 } from '../../src/core/outreach/service.js';
 import type { ChannelId } from '../../src/core/channels/types.js';
 
@@ -28,7 +29,80 @@ describe('Outreach dispatcher', () => {
     const result = await service.scheduleSequence(sequenceInput);
 
     expect(result).toEqual(expect.objectContaining({ sequence_id: 'sequence-1', status: 'ACTIVE', next_step: 0 }));
-    expect(repository.createSequence).toHaveBeenCalledWith(expect.objectContaining({ campaignId: sequenceInput.campaign_id }));
+    expect(repository.createSequence).toHaveBeenCalledWith(expect.objectContaining({
+      campaignId: sequenceInput.campaign_id,
+      initialVersion: {
+        version: 1,
+        steps: [
+          { stepOrder: 0, channel: 'LINKEDIN_CONNECT', delayHours: 0, promptTemplate: 'Connect' },
+          { stepOrder: 1, channel: 'LINKEDIN_MESSAGE', delayHours: 24, promptTemplate: 'Message' },
+          { stepOrder: 2, channel: 'EMAIL', delayHours: 48, promptTemplate: 'Email' },
+        ],
+      },
+      leadStates: [{ leadId: sequenceInput.lead_ids[0], currentStepIndex: 0, status: 'ACTIVE' }],
+    }));
+  });
+
+  it('passes a version snapshot and an ACTIVE state for every lead', async () => {
+    const repository: OutreachRepository = {
+      createSequence: vi.fn().mockResolvedValue({ id: 'sequence-2', status: 'ACTIVE', nextStep: 0 }),
+    };
+    const service = new OutreachService({ repository });
+    const input = { ...sequenceInput, lead_ids: ['00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000012'] };
+
+    await service.scheduleSequence(input);
+
+    const call = vi.mocked(repository.createSequence).mock.calls[0]?.[0];
+    expect(call?.initialVersion.version).toBe(1);
+    expect(call?.initialVersion.steps).toEqual(call?.steps);
+    expect(call?.leadStates).toEqual([
+      { leadId: input.lead_ids[0], currentStepIndex: 0, status: 'ACTIVE' },
+      { leadId: input.lead_ids[1], currentStepIndex: 0, status: 'ACTIVE' },
+    ]);
+  });
+
+  it('creates the initial version, points the sequence at it, and seeds lead states atomically', async () => {
+    const transaction = {
+      outreachSequence: {
+        create: vi.fn().mockResolvedValue({ id: 'sequence-db', status: 'ACTIVE', nextStep: 0 }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      outreachSequenceVersion: {
+        create: vi.fn().mockResolvedValue({ id: 'version-db' }),
+      },
+      leadSequenceState: {
+        createMany: vi.fn().mockResolvedValue({ count: 2 }),
+      },
+    };
+    const db = {
+      $transaction: vi.fn().mockImplementation(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+    };
+    const repository = createPrismaOutreachRepository(db as any);
+    const steps = [
+      { stepOrder: 0, channel: 'LINKEDIN_CONNECT' as const, delayHours: 0, promptTemplate: 'Connect' },
+      { stepOrder: 1, channel: 'EMAIL' as const, delayHours: 24, promptTemplate: 'Email' },
+    ];
+
+    await repository.createSequence({
+      campaignId: sequenceInput.campaign_id,
+      leadIds: sequenceInput.lead_ids,
+      steps,
+      nextRunAt: new Date('2026-08-23T10:00:00Z'),
+      initialVersion: { version: 1, steps },
+      leadStates: [{ leadId: sequenceInput.lead_ids[0], currentStepIndex: 0, status: 'ACTIVE' }],
+    });
+
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(transaction.outreachSequenceVersion.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ sequenceId: 'sequence-db', version: 1, steps }),
+    }));
+    expect(transaction.outreachSequence.update).toHaveBeenCalledWith({
+      where: { id: 'sequence-db' },
+      data: { currentVersionId: 'version-db' },
+    });
+    expect(transaction.leadSequenceState.createMany).toHaveBeenCalledWith({
+      data: [{ leadId: sequenceInput.lead_ids[0], sequenceId: 'sequence-db', currentStepIndex: 0, status: 'ACTIVE' }],
+    });
   });
 
   it('rejects a sequence without an email or LinkedIn step', async () => {

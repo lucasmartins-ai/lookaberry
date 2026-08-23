@@ -9,6 +9,23 @@ export interface FeedbackLoopDependencies {
   _prisma?: typeof prisma;
 }
 
+export type MessageEngagementType = 'OPEN' | 'CLICK';
+
+/** Persist the timestamp consumed by the S10 branching engine. */
+export async function markMessageEngagement(
+  messageId: string,
+  interactionType: MessageEngagementType,
+  deps: FeedbackLoopDependencies = {},
+): Promise<void> {
+  const db = deps._prisma ?? prisma;
+  const timestamp = new Date();
+
+  await db.outreachMessage.update({
+    where: { id: messageId },
+    data: interactionType === 'OPEN' ? { openedAt: timestamp } : { clickedAt: timestamp },
+  });
+}
+
 /**
  * Schedule a delivery verification job after a message is sent.
  *
