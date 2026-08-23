@@ -33,6 +33,22 @@ enum LeadStatus {
   @@map("lead_status_enum")
 }
 
+enum PhoneStatus {
+  UNVERIFIED
+  VALID
+  INVALID
+
+  @@map("phone_status_enum")
+}
+
+enum AccountStatus {
+  ACTIVE
+  BLOCKED
+  EXPIRED
+
+  @@map("account_status_enum")
+}
+
 enum ChannelType {
   LINKEDIN_CONNECT
   LINKEDIN_MESSAGE
@@ -44,6 +60,7 @@ enum ChannelType {
 
 enum MessageStatus {
   QUEUED
+  SCHEDULED
   SENT
   DELIVERED
   OPENED
@@ -53,6 +70,18 @@ enum MessageStatus {
   BOUNCED
 
   @@map("message_status_enum")
+}
+
+enum BranchCondition {
+  NONE
+  OPENED
+  NOT_OPENED
+  REPLIED
+  NOT_REPLIED
+  CLICKED
+  BOUNCED
+
+  @@map("branch_condition_enum")
 }
 
 enum OutreachSequenceStatus {
@@ -210,11 +239,13 @@ model Lead {
   email              String?     @db.VarChar(255)
   emailStatus        EmailStatus @default(UNVERIFIED) @map("email_status")
   phone              String?     @db.VarChar(50)
+  phoneStatus        PhoneStatus @default(UNVERIFIED) @map("phone_status")
   location           String?     @db.VarChar(255)
   icpScore           Decimal     @default(0.00) @map("icp_score") @db.Decimal(5, 2)
   intentScore        Decimal     @default(0.00) @map("intent_score") @db.Decimal(5, 2)
   totalPriorityScore Decimal?    @map("total_priority_score") @db.Decimal(5, 2)
   personId           String?     @map("person_id") @db.Uuid
+  timezone           String?     @db.VarChar(50)
   status             LeadStatus  @default(DISCOVERED)
   metadata           Json?       @default("{}")
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -227,6 +258,7 @@ model Lead {
   outreachSequences   OutreachSequence[]
   interactionFeedback LeadInteractionFeedback[]
   interactions        Interaction[]
+  sequenceStates      LeadSequenceState[]
 
   @@index([companyId], map: "idx_leads_company_id")
   @@index([personId], map: "idx_leads_person_id")
@@ -280,6 +312,16 @@ model SequenceStep {
   promptTemplate String      @map("prompt_template") @db.Text
   createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  branchOn        BranchCondition @default(NONE) @map("branch_on")
+  branchStepIndex  Int?            @map("branch_step_index")
+  variantGroup     String?         @map("variant_group") @db.VarChar(100)
+  variantWeight    Float           @default(1.0) @map("variant_weight")
+  active           Boolean         @default(true)
+  impressions      Int             @default(0)
+  opens            Int             @default(0)
+  replies          Int             @default(0)
+  clicks           Int             @default(0)
+
   campaign Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   sequence OutreachSequence? @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
   messages OutreachMessage[]
@@ -288,36 +330,77 @@ model SequenceStep {
 }
 
 model OutreachSequence {
-  id          String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  campaignId  String                 @map("campaign_id") @db.Uuid
-  status      OutreachSequenceStatus @default(ACTIVE)
-  nextStep    Int                    @default(0) @map("next_step")
-  nextRunAt   DateTime               @map("next_run_at") @db.Timestamptz(6)
-  pausedUntil DateTime?              @map("paused_until") @db.Timestamptz(6)
-  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId       String                 @map("campaign_id") @db.Uuid
+  status           OutreachSequenceStatus @default(ACTIVE)
+  nextStep         Int                    @default(0) @map("next_step")
+  nextRunAt        DateTime               @map("next_run_at") @db.Timestamptz(6)
+  pausedUntil      DateTime?              @map("paused_until") @db.Timestamptz(6)
+  currentVersionId String?                @map("current_version_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  campaign Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  leads    Lead[]
-  steps    SequenceStep[]
+  campaign    Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leads       Lead[]
+  steps       SequenceStep[]
+  versions    OutreachSequenceVersion[] @relation("SequenceVersions")
+  currentVersion OutreachSequenceVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
 
   @@index([status, nextRunAt], map: "idx_outreach_sequences_due")
   @@map("outreach_sequences")
 }
 
+model OutreachSequenceVersion {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  sequenceId        String   @map("sequence_id") @db.Uuid
+  version           Int
+  steps             Json
+  createdBy         String?  @map("created_by") @db.VarChar(255)
+  changeDescription String?  @map("change_description") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sequence  OutreachSequence  @relation("SequenceVersions", fields: [sequenceId], references: [id], onDelete: Cascade)
+  messages  OutreachMessage[]
+
+  @@unique([sequenceId, version], map: "uq_sequence_versions_sequence_version")
+  @@map("outreach_sequence_versions")
+}
+
+model LeadSequenceState {
+  id               String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  leadId           String    @map("lead_id") @db.Uuid
+  sequenceId       String    @map("sequence_id") @db.Uuid
+  currentStepIndex Int       @default(0) @map("current_step_index")
+  status           String    @default("ACTIVE") @db.VarChar(50)
+  pausedUntil      DateTime? @map("paused_until") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  lead     Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  sequence OutreachSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, sequenceId], map: "uq_lead_sequence_state_lead_sequence")
+  @@index([sequenceId, status], map: "idx_lead_sequence_state_sequence_status")
+  @@map("lead_sequence_states")
+}
+
 model OutreachAccount {
-  id          String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  provider    String      @db.VarChar(50)
-  externalId  String      @map("external_id") @db.VarChar(255)
+  id          String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  provider    String        @db.VarChar(50)
+  externalId  String        @map("external_id") @db.VarChar(255)
   channel     ChannelType
-  channelId   String?     @map("channel_id") @db.VarChar(50)
-  dailyLimit  Int         @map("daily_limit")
-  sentToday   Int         @default(0) @map("sent_today")
-  quotaDate   DateTime    @map("quota_date") @db.Date
-  pausedUntil DateTime?   @map("paused_until") @db.Timestamptz(6)
-  sessionKey  String?     @map("session_key") @db.VarChar(255)
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  channelId   String?       @map("channel_id") @db.VarChar(50)
+  dailyLimit  Int           @map("daily_limit")
+  sentToday   Int           @default(0) @map("sent_today")
+  quotaDate   DateTime      @map("quota_date") @db.Date
+  pausedUntil DateTime?     @map("paused_until") @db.Timestamptz(6)
+  sessionKey  String?       @map("session_key") @db.VarChar(255)
+  status      AccountStatus @default(ACTIVE)
+  lastError   String?       @map("last_error") @db.Text
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  messages    OutreachMessage[]
 
   @@unique([provider, externalId, channel], map: "uq_outreach_account_provider_external_channel")
   @@map("outreach_accounts")
@@ -335,8 +418,13 @@ model OutreachMessage {
   body              String        @db.Text
   status            MessageStatus @default(QUEUED)
   externalMessageId String?       @map("external_message_id") @db.VarChar(255)
-  errorReason       String?       @map("error_reason") @db.Text
-  sentAt            DateTime?     @map("sent_at") @db.Timestamptz(6)
+  outreachAccountId  String?       @map("outreach_account_id") @db.Uuid
+  sequenceVersionId  String?       @map("sequence_version_id") @db.Uuid
+  scheduledAt        DateTime?     @map("scheduled_at") @db.Timestamptz(6)
+  openedAt           DateTime?     @map("opened_at") @db.Timestamptz(6)
+  clickedAt          DateTime?     @map("clicked_at") @db.Timestamptz(6)
+  errorReason        String?       @map("error_reason") @db.Text
+  sentAt             DateTime?     @map("sent_at") @db.Timestamptz(6)
   repliedAt         DateTime?     @map("replied_at") @db.Timestamptz(6)
   replySentiment    String?       @map("reply_sentiment") @db.VarChar(50)
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -345,6 +433,8 @@ model OutreachMessage {
   lead                Lead                      @relation(fields: [leadId], references: [id], onDelete: Cascade)
   step                SequenceStep              @relation(fields: [stepId], references: [id], onDelete: Cascade)
   signal              IntentSignal?             @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  outreachAccount     OutreachAccount?          @relation(fields: [outreachAccountId], references: [id], onDelete: SetNull)
+  sequenceVersion     OutreachSequenceVersion?  @relation(fields: [sequenceVersionId], references: [id], onDelete: SetNull)
   interactionFeedback LeadInteractionFeedback[]
 
   @@index([leadId], map: "idx_outreach_messages_lead")

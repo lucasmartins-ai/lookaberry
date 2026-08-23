@@ -23,8 +23,8 @@ export async function scheduleDeliveryVerification(
 ): Promise<void> {
   const db = deps._prisma ?? prisma;
 
-  // Only LinkedIn supports verifyDelivery right now
-  if (channel !== 'linkedin') {
+  // LinkedIn and WhatsApp support verifyDelivery
+  if (channel !== 'linkedin' && channel !== 'whatsapp') {
     return;
   }
 
@@ -112,6 +112,8 @@ export async function executeDeliveryVerification(
       title: '',
       linkedinUrl,
       email: null,
+      phone: null,
+      phoneStatus: null,
     },
     company: {
       id: '',
@@ -132,6 +134,7 @@ export async function executeDeliveryVerification(
       id: messageId,
       subject: null,
       body: '',
+      outreachAccountId: null,
     },
     dryRun: false,
   };

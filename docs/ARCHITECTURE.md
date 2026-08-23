@@ -1,6 +1,6 @@
 # Arquitetura do Sistema — LookaBerry
 
-> **Última atualização**: 2026-08-22 · **Versão**: S6 complete, 172 tests
+> **Última atualização**: 2026-08-23 · **Versão**: S6–S8, 264 unit tests
 
 ---
 
@@ -61,7 +61,7 @@ flowchart TB
         Signals["Public inputs + local signal providers"]
         Waterfall["Enrichment (Cache -> Apollo -> Dropcontact -> MX/ZeroBounce)"]
         LinkedInBridge["LinkedIn via Antigravity Extension (bridge 127.0.0.1:8765)"]
-        MailboxStub["Email Execution (NOT IMPLEMENTED)"]
+        EmailProvider["Email Execution (Resend API / SMTP via nodemailer)"]
     end
 
     Clients -->|Tools / Prompts / Resources| InterfaceLayer
@@ -70,6 +70,7 @@ flowchart TB
     WorkerLayer --> DataLayer
     CoreEngine --> DataLayer
     ExecutionLayer --> LinkedInBridge
+    ExecutionLayer --> EmailProvider
     Scheduler --> Q_Outreach
     InboxWorker --> Q_Inbox
     WorkerLayer --> ExternalProviders
@@ -124,7 +125,15 @@ flowchart TB
 - `ChannelRegistry`: mapeia `ChannelId → ChannelProfile`, expõe `can(channel, capability)` e `getProfile(channel)`.
 - `buildRecommendedActions` filtra ações por `ChannelRegistry.can()`.
 
-### 3.9. Browser Execution Protocol (`src/core/execution/`) — S5
+### 3.9. Email Execution (`src/core/execution/adapters/email.ts` + `src/core/email/`) — S8
+- **`EmailAdapter`** com dois backends via `EMAIL_PROVIDER`: `resend` (API HTTP, tracking nativo + webhooks) e `smtp` (`nodemailer`, tracking via pixel/redirect). `none` mantém stub (backward compat).
+- **Template engine** (`src/core/email/template.ts`): `{{var}}` substitution, subject ≤100 chars, versões HTML + texto, pixel 1x1 e reescrita de links via redirect proxy quando `EMAIL_TRACKING_ENABLED=true`.
+- **Tracking endpoints** (`src/api/routes/emailTracking.ts`): `GET /api/v1/email/track/open/:messageId` (pixel GIF → OPEN) e `GET /api/v1/email/track/click/:messageId?url=` (302 → CLICK). Isentos de auth e rate limit (mail clients fazem pre-fetch).
+- **Webhook Resend** (`src/api/routes/emailWebhooks.ts`): `POST /api/v1/email/webhooks/resend`, validação Svix (`svix-id`/`svix-timestamp`/`svix-signature`) no plugin `webhookAuth`, resolução da mensagem via header `X-Message-ID`, mapeamento `delivered→OPEN`, `opened→OPEN`, `clicked→CLICK`, `bounced→BOUNCE`, `complained→OPEN` + revisão humana.
+- **Mapeamento de erros**: rede/timeout → retryable; 429 → `rateLimitHit` + pausa 24h (profile email); hard bounce → não-retryable + `Lead.emailStatus=INVALID`; soft bounce → retryable; auth → não-retryable.
+- **`verifyDelivery`**: Resend consulta `GET https://api.resend.com/emails/{id}`; SMTP assume aceito no envelope (sem tracking nativo).
+
+### 3.9b. Browser Execution Protocol (`src/core/execution/`) — S5
 - **ChannelAdapter**: contrato que todo adaptador implementa (`execute`, `canHandle`).
 - **ExecutionContext**: lead, company, account (com credenciais/session), message, dryRun.
 - **ExecutionResult**: success, externalId, error, retryable, rateLimitHit, channelPausedUntil.
@@ -227,6 +236,6 @@ flowchart TB
 | Canal | Adapter | Status |
 | :--- | :--- | :--- |
 | `linkedin` | `LinkedInAdapter` | ✅ Implementado (Antigravity bridge) |
-| `email` | `EmailAdapter` | ⚠️ Stub (`NOT_IMPLEMENTED`) |
+| `email` | `EmailAdapter` | ✅ Implementado (Resend API + SMTP nodemailer, tracking + webhooks Svix) |
 | `whatsapp` | `WhatsAppAdapter` | ⚠️ Stub (`NOT_IMPLEMENTED`) |
 | `manual` | `ManualAdapter` | ✅ Implementado (always success for `followUp`) |

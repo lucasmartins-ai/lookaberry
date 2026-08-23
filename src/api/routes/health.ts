@@ -34,20 +34,23 @@ export async function healthRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      let dbStatus = 'ok';
-      let redisStatus = 'ok';
+      const HEALTH_TIMEOUT_MS = 2000;
 
-      try {
-        await prisma.$queryRaw`SELECT 1`;
-      } catch (err: any) {
-        dbStatus = `unreachable: ${err.message}`;
-      }
+      const withTimeout = <T>(promise: Promise<T>, label: string): Promise<T> =>
+        Promise.race([
+          promise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`${label} timed out after ${HEALTH_TIMEOUT_MS}ms`)), HEALTH_TIMEOUT_MS),
+          ),
+        ]);
 
-      try {
-        await redisConnection.ping();
-      } catch (err: any) {
-        redisStatus = `unreachable: ${err.message}`;
-      }
+      const [dbResult, redisResult] = await Promise.allSettled([
+        withTimeout(prisma.$queryRaw`SELECT 1`, 'database'),
+        withTimeout(redisConnection.ping(), 'redis'),
+      ]);
+
+      const dbStatus = dbResult.status === 'fulfilled' ? 'ok' : `unreachable: ${(dbResult as PromiseRejectedResult).reason?.message ?? 'unknown error'}`;
+      const redisStatus = redisResult.status === 'fulfilled' ? 'ok' : `unreachable: ${(redisResult as PromiseRejectedResult).reason?.message ?? 'unknown error'}`;
 
       const isHealthy = dbStatus === 'ok' && redisStatus === 'ok';
 

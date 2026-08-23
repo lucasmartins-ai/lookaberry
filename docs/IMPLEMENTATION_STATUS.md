@@ -1,6 +1,6 @@
-# Status de Implementação — LookaBerry (S6)
+# Status de Implementação — LookaBerry (S8)
 
-> **Data**: 2026-08-22 · **Commit**: `48934bd` — S6 autonomous loop complete · **Testes**: 172 unit tests pass
+> **Data**: 2026-08-23 · **Commit**: `48934bd` (S1–S6) + S7 (security) + S8 (email) · **Testes**: 264 unit tests pass
 
 ## Classificações usadas
 
@@ -55,7 +55,7 @@
 | Canal | Status | Detalhe |
 | :--- | :--- | :--- |
 | LinkedIn (connect/message/search/read) | **IMPLEMENTED** | `LinkedInAdapter` via extensão Antigravity (bridge 127.0.0.1:8765). Health check, retry, classificação de erros. |
-| Email (SMTP/Smartlead/Resend) | **NOT IMPLEMENTED** | Stub adapter retorna `NOT_IMPLEMENTED`. Sprint 7 planejada. |
+| Email (Resend / SMTP) | **IMPLEMENTED** | `EmailAdapter` real (S8): Resend API + nodemailer SMTP, template rendering `{{var}}`, pixel/click tracking, webhook Svix, bounce handling, verifyDelivery. `EMAIL_PROVIDER=none` mantém stub (backward compat). |
 | WhatsApp | **NOT IMPLEMENTED** | Stub adapter retorna `NOT_IMPLEMENTED`. Sprint 9 planejada. |
 | Manual tasks | **IMPLEMENTED** | `ManualAdapter` retorna sucesso para `followUp`. |
 
@@ -122,7 +122,9 @@
 | Unit — scraper | `tests/unit/scraper.test.ts` | 1 | ✅ |
 | Unit — waterfall | `tests/unit/waterfall.test.ts` | 3 | ✅ |
 | **Unit — S6 autonomous loop** | `tests/unit/s6-autonomous-loop.test.ts` | **42** | ✅ |
-| **TOTAL UNIT** | **16 files** | **172** | ✅ |
+| **Unit — S7 security** | `tests/unit/s7-security.test.ts` | **45** | ✅ |
+| **Unit — S8 email** | `tests/unit/s8-email.test.ts` | **45** | ✅ |
+| **TOTAL UNIT** | **18 files** | **264** | ✅ |
 | Integration — API | `tests/integration/api.test.ts` | 2 | ⚠️ (requer PG) |
 | Integration — DB | `tests/integration/db.test.ts` | 2 | ⚠️ (requer PG) |
 | Integration — Evidence | `tests/integration/evidence.test.ts` | 1 | ⚠️ (requer PG) |
@@ -137,7 +139,7 @@
 | Prioridade | Sprint | Descrição |
 | :---: | :--- | :--- |
 | 🔴 | S7 | Auth, Rate Limiting & Security Hardening |
-| 🔴 | S8 | Email Execution (Smartlead/Resend SMTP) |
+| ✅ | S8 | Email Execution (Resend/SMTP) — concluído |
 | 🟡 | S9 | WhatsApp Execution & Multi-Account LinkedIn |
 | 🟢 | S10 | Ops Dashboard & Real-Time Monitoring |
 
@@ -151,7 +153,7 @@
 | Sem validação de assinatura em webhooks | 🔴 Critical | Webhooks podem ser forjados. Sprint 7. |
 | Sem idempotência em webhooks | 🟡 High | Eventos duplicados podem distorcer métricas. Sprint 7. |
 | Embeddings sem API key são ruído | 🟡 High | Fallback SHA-256 não tem similaridade semântica. |
-| EmailAdapter stub | 🟡 High | Sem envio real de email. Sprint 8. |
+| SMTP bounce detection via RET | 🟢 Medium | SMTP sem tracking nativo — bounces só via RET/relay webhooks (SendGrid/Mailgun via `X-Provider`). |
 | WhatsAppAdapter stub | 🟡 High | Sem envio real de WhatsApp. Sprint 9. |
 | `signal_ingestion_queue` sem worker | 🟢 Medium | Fila criada, nada consome. |
 | Inbox reader usa heurística keyword | 🟢 Medium | Classificação sem Haiku (offline). OK para protótipo. |

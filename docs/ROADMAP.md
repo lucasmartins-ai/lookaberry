@@ -1,6 +1,6 @@
 # Roadmap Detalhado de Execução — LookaBerry
 
-> **Última atualização**: 2026-08-22 · **Commit**: S6 complete, 172 tests, autonomous loop operational
+> **Última atualização**: 2026-08-23 · **Commit**: S6 complete (172 tests) + S7 security + S8 email (264 unit tests)
 
 ---
 
@@ -133,15 +133,20 @@ Ao final de **cada Sprint**, o sistema possui um conjunto utilizável e testáve
 - **Testes**: middleware tests, rate limit tests, webhook signature tests
 - **Complexidade**: Média (3 dias)
 
-### Sprint 8: Email Execution (Smartlead/Resend SMTP) `[🔜 PLANEJADO]`
+### Sprint 8: Email Execution (Resend/SMTP) `[✅ CONCLUÍDO]`
 - **Objetivo**: Substituir o stub `EmailAdapter` (`NOT_IMPLEMENTED`) por envio real de email.
 - **Escopo**:
-  - `EmailAdapter` real com SMTP/API (Smartlead, Resend, SendGrid)
-  - Template rendering com variáveis do lead
-  - Tracking de open/click/bounce via webhooks dos provedores
-  - Mapeamento de eventos do provedor → contrato interno de webhook
-  - Retry e bounce handling
-- **Tool MCP**: `gtm_send_email` (opcional — integrado ao dispatcher)
+  - `EmailAdapter` real com dois backends configuráveis via `EMAIL_PROVIDER`:
+    - `resend` — API HTTP (`POST https://api.resend.com/emails`), tracking nativo + webhooks Svix
+    - `smtp` — `nodemailer` (`SMTP_HOST/PORT/USER/PASS/SECURE`), tracking via pixel + click redirect
+    - `none` — mantém stub `NOT_IMPLEMENTED` (backward compat)
+  - Template rendering `src/core/email/template.ts`: substituição `{{var}}`, subject ≤100 chars, versões HTML + texto, pixel 1x1 e reescrita de links via redirect proxy (`EMAIL_TRACKING_ENABLED`)
+  - Tracking endpoints (`src/api/routes/emailTracking.ts`): `GET /api/v1/email/track/open/:messageId` (pixel GIF, registra OPEN) e `GET /api/v1/email/track/click/:messageId?url=` (302, registra CLICK) — isentos de auth e rate limit
+  - Webhook Resend (`src/api/routes/emailWebhooks.ts`): `POST /api/v1/email/webhooks/resend`, validação de assinatura Svix (`svix-id`/`svix-timestamp`/`svix-signature`), mapeamento `delivered→OPEN`, `opened→OPEN`, `clicked→CLICK`, `bounced→BOUNCE`, `complained→OPEN` + revisão humana, resolução da mensagem via header `X-Message-ID`
+  - Mapeamento de erros: rede/timeout → retryable, 429 → `rateLimitHit` + pausa do canal (24h via profile), hard bounce → não-retryable + `emailStatus=INVALID`, soft bounce → retryable
+  - `verifyDelivery`: Resend consulta `GET /api/v1/emails/{id}`; SMTP assume aceito no envelope
+- **Tool MCP**: sem nova tool — integrado ao dispatcher existente (`handleExecutionResult` já pausa a sequência em `rateLimitHit`)
+- **Testes**: 45 unit tests (`tests/unit/s8-email.test.ts`)
 - **Complexidade**: Alta (5 dias)
 
 ### Sprint 9: WhatsApp Execution & Multi-Account LinkedIn `[🔜 PLANEJADO]`

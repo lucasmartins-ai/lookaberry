@@ -4,6 +4,13 @@ import { executionRouter } from './index.js';
 import { applyAntiBanPolicy, sampleHumanDelaySeconds, advanceSequenceState } from '../outreach/service.js';
 import { channelRegistry } from '../channels/registry.js';
 import { handlePostSendFeedback } from './feedbackLoop.js';
+import {
+  resolveAccount,
+  recordSent,
+  markAccountBlocked,
+  markAccountPaused,
+  markAccountExpired,
+} from './accountResolver.js';
 import type { RecommendedAction } from '../decision/types.js';
 import type { ExecutionContext, ExecutionResult } from './types.js';
 import type { ChannelId } from '../channels/types.js';
@@ -60,10 +67,9 @@ export function createDispatcherWorker(
 /**
  * Process the CURRENT pending step in an outreach sequence.
  *
- * S6 fix: Process ONE step at a time (the step at index `nextStep`).
- * After dispatching all leads for this step, advance `nextStep` and set
- * `nextRunAt = NOW() + delayHours` so the Sequence Scheduler picks up
- * the next step after the configured delay.
+ * S9 update: Uses Account Resolver for real multi-account failover.
+ * If an account is blocked, the next available account is tried (one retry).
+ * Rate limits pause individual accounts, not the entire sequence.
  */
 async function processSequenceStep(
   sequenceId: string,
@@ -83,6 +89,8 @@ async function processSequenceStep(
           title: true,
           linkedinUrl: true,
           email: true,
+          phone: true,
+          phoneStatus: true,
           companyId: true,
           company: {
             select: {
@@ -114,10 +122,8 @@ async function processSequenceStep(
     return { dispatched: 0, errors: 0, nextRunAt: null };
   }
 
-  // S6: Process ONLY the current step (at index = nextStep)
   const currentStep = sequence.steps[sequence.nextStep];
   if (!currentStep) {
-    // All steps complete
     await prisma.outreachSequence.update({
       where: { id: sequenceId },
       data: { status: 'COMPLETED' },
@@ -132,14 +138,29 @@ async function processSequenceStep(
   let dispatched = 0;
   let errors = 0;
 
-  // S6: Process all leads for this ONE step
   for (const lead of sequence.leads) {
-    // Find queued message for this lead at this step
     const message = currentStep.messages.find((m: { leadId: string }) => m.leadId === lead.id);
     if (!message) continue;
 
-    // Determine capability based on channel: LinkedIn uses 'connect' for LINKEDIN_CONNECT
     const capability = currentStep.channel === 'LINKEDIN_CONNECT' ? 'connect' as const : 'sendMessage' as const;
+
+    // S9: Resolve a real account for this channel
+    let resolved = await resolveAccount(currentChannelId, prisma);
+
+    // S9: If no accounts configured, fall back to default (backward compat)
+    if (!resolved) {
+      resolved = {
+        id: 'default',
+        provider: currentChannelId,
+        externalId: 'default',
+        dailyLimit: profile?.defaultDailyLimit ?? 100,
+        sentToday: 0,
+        quotaDate: new Date(),
+        pausedUntil: null,
+        sessionKey: null,
+        status: 'ACTIVE',
+      };
+    }
 
     // Build execution context
     const context: ExecutionContext = {
@@ -151,6 +172,8 @@ async function processSequenceStep(
         title: lead.title,
         linkedinUrl: lead.linkedinUrl,
         email: lead.email,
+        phone: lead.phone,
+        phoneStatus: lead.phoneStatus,
       },
       company: {
         id: lead.company.id,
@@ -159,23 +182,24 @@ async function processSequenceStep(
         linkedinUrl: lead.company.linkedinUrl,
       },
       account: {
-        id: 'default',
-        provider: currentChannelId,
-        externalId: 'default',
-        dailyLimit: profile?.defaultDailyLimit ?? 100,
-        sentToday: 0,
-        pausedUntil: null,
-        sessionKey: null,
+        id: resolved.id,
+        provider: resolved.provider,
+        externalId: resolved.externalId,
+        dailyLimit: resolved.dailyLimit,
+        sentToday: resolved.sentToday,
+        pausedUntil: resolved.pausedUntil instanceof Date ? resolved.pausedUntil : resolved.pausedUntil ? new Date(resolved.pausedUntil) : null,
+        sessionKey: resolved.sessionKey,
       },
       message: {
         id: message.id,
         subject: message.subject,
         body: message.body,
+        outreachAccountId: resolved.id,
       },
       dryRun: false,
     };
 
-    // Apply anti-ban policy
+    // Apply anti-ban policy with real account values
     const antiBan = applyAntiBanPolicy({
       channel: currentChannelId,
       sentToday: context.account.sentToday,
@@ -184,16 +208,26 @@ async function processSequenceStep(
     });
 
     if (!antiBan.allowed) {
-      if (antiBan.pausedUntil) {
+      // S9: Pause the account, not the whole sequence (unless no accounts are available)
+      if (antiBan.pausedUntil && resolved.id !== 'default') {
+        await markAccountPaused(resolved.id, antiBan.pausedUntil, prisma);
+      }
+      // Check if ANY account is still available for this channel
+      const altAccount = resolved.id !== 'default'
+        ? await resolveAccount(currentChannelId, prisma)
+        : null;
+      if (!altAccount) {
+        // No accounts left — pause the sequence
         await prisma.outreachSequence.update({
           where: { id: sequenceId },
           data: { pausedUntil: antiBan.pausedUntil },
         });
+        return { dispatched, errors, nextRunAt: antiBan.pausedUntil?.toISOString() ?? null };
       }
-      return { dispatched, errors, nextRunAt: antiBan.pausedUntil?.toISOString() ?? null };
+      // There is another account — just mark this lead for the next account
+      continue;
     }
 
-    // Build recommended action from the step template
     const action: RecommendedAction = {
       channel: currentChannelId,
       capability,
@@ -203,11 +237,56 @@ async function processSequenceStep(
     };
 
     try {
-      const result = await router.execute(action, context);
-      await handleExecutionResult(prisma, message.id, result, sequenceId);
+      let result = await router.execute(action, context);
+
+      // S9: Failover on permanent account failure
+      if (!result.success && !result.retryable && resolved.id !== 'default') {
+        // Classify the failure reason
+        const errorMsg = (result.error ?? '').toUpperCase();
+        const isSessionExpired = errorMsg.includes('SESSION_EXPIRED') || errorMsg.includes('401');
+        const isBlocked = errorMsg.includes('403') || errorMsg.includes('FORBIDDEN') || errorMsg.includes('CAPTCHA');
+
+        if (isSessionExpired) {
+          await markAccountExpired(resolved.id, result.error ?? 'Session expired', prisma);
+        } else if (isBlocked) {
+          await markAccountBlocked(resolved.id, result.error ?? 'Account blocked', prisma);
+        }
+
+        // Try the next available account
+        const nextAccount = await resolveAccount(currentChannelId, prisma);
+        if (nextAccount) {
+          console.log(`[Dispatcher] Failover: account ${resolved.id} blocked, retrying with ${nextAccount.id}`);
+
+          // Rebuild context with new account
+          const retryContext: ExecutionContext = {
+            ...context,
+            account: {
+              id: nextAccount.id,
+              provider: nextAccount.provider,
+              externalId: nextAccount.externalId,
+              dailyLimit: nextAccount.dailyLimit,
+              sentToday: nextAccount.sentToday,
+              pausedUntil: nextAccount.pausedUntil instanceof Date ? nextAccount.pausedUntil : nextAccount.pausedUntil ? new Date(nextAccount.pausedUntil) : null,
+              sessionKey: nextAccount.sessionKey,
+            },
+            message: {
+              ...context.message,
+              outreachAccountId: nextAccount.id,
+            },
+          };
+
+          result = await router.execute(action, retryContext);
+        }
+      }
+
+      await handleExecutionResult(prisma, message.id, result, sequenceId, resolved.id);
+
       if (result.success) {
         dispatched++;
-        // S6: Schedule delivery verification for LinkedIn messages
+        // Record the send on the account that succeeded
+        if (context.message.outreachAccountId && context.message.outreachAccountId !== 'default') {
+          await recordSent(context.message.outreachAccountId, prisma);
+        }
         await handlePostSendFeedback(result, message.id, lead.id, currentChannelId)
           .catch(err => console.warn('[Dispatcher] Post-send feedback error:', err instanceof Error ? err.message : String(err)));
       } else {
@@ -226,12 +305,10 @@ async function processSequenceStep(
       continue;
     }
 
-    // Humanized delay between actions
     const delayMs = sampleHumanDelaySeconds(() => Math.random()) * 1_000;
     await sleep(Math.max(rateLimitWindowMs, delayMs));
   }
 
-  // S6: Advance the sequence by one step
   const outcome = errors > 0 && dispatched === 0 ? 'RETRYABLE_FAILURE' : 'SENT';
   const next = advanceSequenceState(
     { status: sequence.status, nextStep: sequence.nextStep },
@@ -239,7 +316,6 @@ async function processSequenceStep(
     sequence.steps.length,
   );
 
-  // S6: Set nextRunAt for the NEXT step based on delayHours
   const nextStepDelayHours = currentStep.delayHours ?? 24;
   const nextRunAt = next.status === 'ACTIVE'
     ? new Date(Date.now() + nextStepDelayHours * 3_600_000)
@@ -267,7 +343,10 @@ async function handleExecutionResult(
   messageId: string,
   result: ExecutionResult,
   sequenceId: string,
+  accountId: string,
 ): Promise<void> {
+  const accountData = accountId !== 'default' ? { outreachAccountId: accountId } : {};
+
   if (result.success) {
     await prisma.outreachMessage.update({
       where: { id: messageId },
@@ -275,6 +354,7 @@ async function handleExecutionResult(
         status: 'SENT',
         externalMessageId: result.externalId ?? null,
         sentAt: new Date(),
+        ...accountData,
       },
     });
   } else if (result.retryable) {
@@ -283,6 +363,7 @@ async function handleExecutionResult(
       data: {
         status: 'QUEUED',
         errorReason: result.error ?? 'Retryable failure',
+        ...accountData,
       },
     });
   } else {
@@ -291,15 +372,13 @@ async function handleExecutionResult(
       data: {
         status: 'FAILED',
         errorReason: result.error ?? 'Permanent failure',
+        ...accountData,
       },
     });
   }
 
-  // If rate limited or channel needs pause, update the sequence
-  if (result.rateLimitHit && result.channelPausedUntil) {
-    await prisma.outreachSequence.update({
-      where: { id: sequenceId },
-      data: { pausedUntil: result.channelPausedUntil },
-    });
+  // S9: Rate limit pauses the ACCOUNT, not the sequence
+  if (result.rateLimitHit && result.channelPausedUntil && accountId !== 'default') {
+    await markAccountPaused(accountId, result.channelPausedUntil, prisma);
   }
 }

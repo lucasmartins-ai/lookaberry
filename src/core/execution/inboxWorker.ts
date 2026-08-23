@@ -90,6 +90,8 @@ export async function readAndProcessInbox(
       title: '',
       linkedinUrl: null,
       email: null,
+      phone: null,
+      phoneStatus: null,
     },
     company: {
       id: 'inbox-reader',
@@ -110,6 +112,7 @@ export async function readAndProcessInbox(
       id: 'inbox-reader',
       subject: null,
       body: '',
+      outreachAccountId: null,
     },
     dryRun: false,
   };

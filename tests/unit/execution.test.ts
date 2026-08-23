@@ -20,6 +20,8 @@ function makeContext(overrides: Partial<ExecutionContext> = {}): ExecutionContex
       title: 'VP of Sales',
       linkedinUrl: 'https://linkedin.com/in/alicejohnson',
       email: 'alice@example.com',
+      phone: null,
+      phoneStatus: null,
     },
     company: {
       id: 'company-1',
@@ -40,6 +42,7 @@ function makeContext(overrides: Partial<ExecutionContext> = {}): ExecutionContex
       id: 'msg-1',
       subject: 'Quick intro',
       body: 'Hi Alice, noticed Acme Corp is growing!',
+      outreachAccountId: null,
     },
     dryRun: false,
     ...overrides,

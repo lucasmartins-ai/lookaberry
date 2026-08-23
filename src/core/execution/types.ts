@@ -1,6 +1,11 @@
 import type { ChannelCapability, ChannelId } from '../channels/types.js';
 import type { RecommendedAction } from '../decision/types.js';
 
+import type { BranchCondition as PrismaBranchCondition } from '@prisma/client';
+
+/** Re-export from Prisma so consumers don't need @prisma/client */
+export type BranchCondition = PrismaBranchCondition | 'NONE' | 'OPENED' | 'NOT_OPENED' | 'REPLIED' | 'NOT_REPLIED' | 'CLICKED' | 'BOUNCED';
+
 /** Contract every channel adapter must implement */
 export interface ChannelAdapter {
   /** Channel this adapter handles */
@@ -24,6 +29,8 @@ export interface ExecutionContext {
     title: string;
     linkedinUrl: string | null;
     email: string | null;
+    phone: string | null;
+    phoneStatus: string | null;
   };
   /** Company associated with the lead */
   company: {
@@ -47,6 +54,7 @@ export interface ExecutionContext {
     id: string;
     subject: string | null;
     body: string;
+    outreachAccountId: string | null;
   };
   /** If true, skip actual execution and simulate the result */
   dryRun: boolean;
