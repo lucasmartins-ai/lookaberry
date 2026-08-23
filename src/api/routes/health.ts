@@ -1,8 +1,35 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../../db/client.js';
 import { redisConnection } from '../../core/queues/queue.js';
+import { getCadenceGovernor } from '../../core/execution/cadenceGovernor.js';
 
 export async function healthRoutes(app: FastifyInstance) {
+  // S10: Cadence governor health check
+  app.get(
+    '/api/v1/health/cadence',
+    {
+      schema: {
+        description: 'Get current cadence governor state (S10)',
+        tags: ['Health', 'S10'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              channelSlots: { type: 'object' },
+              globalSlots: { type: 'object' },
+              nextAvailableMs: { type: 'number' },
+            },
+          },
+        },
+      },
+    },
+    async (_request, reply) => {
+      const governor = getCadenceGovernor();
+      const state = governor.getGlobalState();
+      return reply.status(200).send(state);
+    },
+  );
+
   app.get(
     '/health',
     {

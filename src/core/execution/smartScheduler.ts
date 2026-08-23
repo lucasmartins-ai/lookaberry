@@ -29,11 +29,11 @@ const BRAZIL_DDD_TIMEZONE: Record<string, string> = {
   // All others default to Brasília: UTC-3
 };
 
-/** Brazilian state/city keywords → timezone */
+/** Brazilian state/city keywords → timezone (ordered: more specific first) */
 const BRAZIL_LOCATION_TIMEZONE: Array<{ pattern: RegExp; tz: string }> = [
   { pattern: /\b(acre|rio branco|cruzeiro do sul)\b/i, tz: 'America/Rio_Branco' },
-  { pattern: /\b(mato grosso|cuiab[aá]|rondon[oó]polis|sinop)\b/i, tz: 'America/Cuiaba' },
   { pattern: /\b(mato grosso do sul|campo grande|dourados|tr[eê]s lagoas)\b/i, tz: 'America/Campo_Grande' },
+  { pattern: /\b(mato grosso|cuiab[aá]|rondon[oó]polis|sinop)\b/i, tz: 'America/Cuiaba' },
   { pattern: /\b(amazonas|manaus|parintins|itacoatiara)\b(?!.*\b(parte|extremo)\b)/i, tz: 'America/Manaus' },
   { pattern: /\b(roraima|boa vista)\b/i, tz: 'America/Boa_Vista' },
   { pattern: /\b(rond[ôo]nia|porto velho|ji-paran[aá])\b/i, tz: 'America/Porto_Velho' },
@@ -160,52 +160,66 @@ export function nextAvailableSlot(
     hour12: false,
   });
   const parts = fmt.formatToParts(now);
-  const localDate = getPart(parts, 'year') + '-' + getPart(parts, 'month') + '-' + getPart(parts, 'day');
+  const localYear = parseInt(getPart(parts, 'year'), 10);
+  const localMonth = parseInt(getPart(parts, 'month'), 10);
+  const localDay = parseInt(getPart(parts, 'day'), 10);
   const localHour = parseInt(getPart(parts, 'hour'), 10);
   const localMinute = parseInt(getPart(parts, 'minute'), 10);
-  const localSeconds = parseInt(getPart(parts, 'second'), 10);
 
   const localTimeMinutes = localHour * 60 + localMinute;
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
 
-  let candidateLocal: Date;
+  // Determine target date in the target timezone
+  let targetYear = localYear;
+  let targetMonth = localMonth;
+  let targetDay = localDay;
 
   if (localTimeMinutes >= endMinutes) {
-    // After business hours → next day at start
-    candidateLocal = new Date(`${localDate}T${startStr}:00`);
-    candidateLocal.setDate(candidateLocal.getDate() + 1);
-  } else if (localTimeMinutes < startMinutes) {
-    // Before business hours → today at start
-    candidateLocal = new Date(`${localDate}T${startStr}:00`);
-  } else {
-    // During business hours but maybe wrong day of week
-    candidateLocal = new Date(`${localDate}T${startStr}:00`);
+    // After business hours → next day
+    const next = new Date(Date.UTC(targetYear, targetMonth - 1, targetDay, 12, 0, 0));
+    const nextParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date(next.getTime() + 86400000));
+    targetYear = parseInt(getPart(nextParts, 'year'), 10);
+    targetMonth = parseInt(getPart(nextParts, 'month'), 10);
+    targetDay = parseInt(getPart(nextParts, 'day'), 10);
   }
+  // else: today at start time
 
-  // Adjust to next valid day of week
+  // Build a UTC date representing the candidate local date/time
+  // We construct it as UTC then adjust by the timezone offset.
+  // Concept: we want local time targetH:targetM in timezone.
+  // localTime = utcTime + offset  =>  utcTime = localTime - offset
+  let candidateMs = Date.UTC(targetYear, targetMonth - 1, targetDay, startH, startM, 0);
+  let candidate = new Date(candidateMs);
+
+  // Adjust to next valid day of week (check in target timezone)
   while (true) {
-    const dayOfWeek = candidateLocal.getDay();
-    if (config.daysOfWeek.includes(dayOfWeek)) break;
-    candidateLocal.setDate(candidateLocal.getDate() + 1);
+    const dow = getDayOfWeekInTimezone(candidate, timezone);
+    if (config.daysOfWeek.includes(dow)) break;
+    candidateMs += 86400000;
+    candidate = new Date(candidateMs);
   }
 
   // Make sure we're not scheduling in the past
-  if (candidateLocal <= now) {
-    candidateLocal.setDate(candidateLocal.getDate() + 1);
+  // Compare the actual UTC time, not the naive UTC representation
+  const candidateUtc = candidateMs - getTimezoneOffset(timezone, candidate) * 60_000;
+  if (candidateUtc <= now.getTime()) {
+    candidateMs += 86400000;
+    candidate = new Date(candidateMs);
     while (true) {
-      const dayOfWeek = candidateLocal.getDay();
-      if (config.daysOfWeek.includes(dayOfWeek)) break;
-      candidateLocal.setDate(candidateLocal.getDate() + 1);
+      const dow = getDayOfWeekInTimezone(candidate, timezone);
+      if (config.daysOfWeek.includes(dow)) break;
+      candidateMs += 86400000;
+      candidate = new Date(candidateMs);
     }
   }
 
-  // Convert from local timezone to UTC
-  // We do this by constructing the UTC equivalent
-  const localStr = candidateLocal.toISOString().slice(0, 19);
-  // Actually we need a proper conversion. Use Intl.DateTimeFormat offset.
-  const offsetMinutes = getTimezoneOffset(timezone, now);
-  return new Date(candidateLocal.getTime() - offsetMinutes * 60_000 + getTimezoneOffset(timezone, candidateLocal) * 60_000);
+  // Convert: candidateMs was built with UTC fields matching the desired local time.
+  // To get actual UTC, we compute: utc = localFields_as_utc - offset
+  const tzOffset = getTimezoneOffset(timezone, candidate);
+  return new Date(candidateMs - tzOffset * 60_000);
 }
 
 // ─── Helpers ───

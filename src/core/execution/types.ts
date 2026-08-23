@@ -1,10 +1,8 @@
 import type { ChannelCapability, ChannelId } from '../channels/types.js';
 import type { RecommendedAction } from '../decision/types.js';
 
-import type { BranchCondition as PrismaBranchCondition } from '@prisma/client';
-
-/** Re-export from Prisma so consumers don't need @prisma/client */
-export type BranchCondition = PrismaBranchCondition | 'NONE' | 'OPENED' | 'NOT_OPENED' | 'REPLIED' | 'NOT_REPLIED' | 'CLICKED' | 'BOUNCED';
+/** S10: Branch condition enum values (mirrors Prisma BranchCondition enum) */
+export type BranchCondition = 'NONE' | 'OPENED' | 'NOT_OPENED' | 'REPLIED' | 'NOT_REPLIED' | 'CLICKED' | 'BOUNCED';
 
 /** Contract every channel adapter must implement */
 export interface ChannelAdapter {

@@ -340,11 +340,12 @@ model OutreachSequence {
   createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  campaign    Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  leads       Lead[]
-  steps       SequenceStep[]
-  versions    OutreachSequenceVersion[] @relation("SequenceVersions")
-  currentVersion OutreachSequenceVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  campaign         Campaign                    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leads            Lead[]
+  steps            SequenceStep[]
+  versions         OutreachSequenceVersion[]   @relation("SequenceVersions")
+  currentVersion   OutreachSequenceVersion?    @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  leadStates       LeadSequenceState[]
 
   @@index([status, nextRunAt], map: "idx_outreach_sequences_due")
   @@map("outreach_sequences")
@@ -359,8 +360,9 @@ model OutreachSequenceVersion {
   changeDescription String?  @map("change_description") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  sequence  OutreachSequence  @relation("SequenceVersions", fields: [sequenceId], references: [id], onDelete: Cascade)
-  messages  OutreachMessage[]
+  sequence           OutreachSequence  @relation("SequenceVersions", fields: [sequenceId], references: [id], onDelete: Cascade)
+  currentForSequence OutreachSequence[] @relation("CurrentVersion")
+  messages           OutreachMessage[]
 
   @@unique([sequenceId, version], map: "uq_sequence_versions_sequence_version")
   @@map("outreach_sequence_versions")
