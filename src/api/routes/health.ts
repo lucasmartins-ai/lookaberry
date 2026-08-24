@@ -9,6 +9,8 @@ import {
   outreachQueue,
   outreachInboxQueue,
 } from '../../core/queues/queue.js';
+import { getRecoveryState } from '../../core/execution/recovery.js';
+import { getBackoffTracker } from '../../core/execution/backoff.js';
 
 const HEALTH_TIMEOUT_MS = 2000;
 
@@ -245,5 +247,111 @@ export async function healthRoutes(app: FastifyInstance) {
   }, async (_request, reply) => {
     const governor = getCadenceGovernor();
     return reply.status(200).send(governor.getGlobalState());
+  });
+
+  // ─── S13: Sync health ────────────────────────────────────────────────
+  app.get('/api/v1/health/sync', {
+    schema: {
+      description: 'S13: Last successful synchronization timestamp and summary',
+      tags: ['Health', 'S13'],
+    },
+  }, async (_request, reply) => {
+    try {
+      const latestMessage = await prisma.outreachMessage.findFirst({
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      const latestMetric = await prisma.campaignMetric.findFirst({
+        orderBy: { updatedAt: 'desc' },
+        select: { updatedAt: true },
+      });
+
+      return reply.status(200).send({
+        last_sync_at: new Date().toISOString(),
+        latest_message_at: latestMessage?.createdAt ?? null,
+        latest_campaign_update_at: latestMetric?.updatedAt ?? null,
+        api_version: '0.1.0',
+      });
+    } catch (err) {
+      return reply.status(503).send({
+        last_sync_at: null,
+        error: err instanceof Error ? err.message : 'Sync check failed',
+      });
+    }
+  });
+
+  // ─── S14: DLQ health ───────────────────────────────────────────────────
+  app.get('/api/v1/health/dlq', {
+    schema: {
+      description: 'S14: Dead-Letter Queue status — pending and recent jobs',
+      tags: ['Health', 'S14'],
+    },
+  }, async (_request, reply) => {
+    try {
+      const pending = await prisma.deadLetterJob.count({ where: { status: 'PENDING' } });
+      const last24h = await prisma.deadLetterJob.count({
+        where: { deadLetteredAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1_000) } },
+      });
+      const recent = await prisma.deadLetterJob.findMany({
+        where: { status: 'PENDING' },
+        orderBy: { deadLetteredAt: 'desc' },
+        take: 10,
+        select: { id: true, sequenceId: true, errorMessage: true, attemptCount: true, deadLetteredAt: true },
+      });
+      return reply.status(200).send({
+        status: pending > 0 ? 'degraded' : 'ok',
+        pending_count: pending,
+        last_24h_count: last24h,
+        recent: recent.map(j => ({
+          id: j.id,
+          sequence_id: j.sequenceId,
+          error: j.errorMessage.slice(0, 200),
+          attempts: j.attemptCount,
+          dead_lettered_at: j.deadLetteredAt?.toISOString() ?? null,
+        })),
+      });
+    } catch (err) {
+      return reply.status(503).send({ error: err instanceof Error ? err.message : 'DLQ check failed' });
+    }
+  });
+
+  // ─── S14: Idempotency stats ────────────────────────────────────────────
+  app.get('/api/v1/health/idempotency', {
+    schema: {
+      description: 'S14: Idempotency key stats — deduplication rate',
+      tags: ['Health', 'S14'],
+    },
+  }, async (_request, reply) => {
+    try {
+      const totalKeys = await prisma.idempotencyKey.count();
+      const lastHour = await prisma.idempotencyKey.count({
+        where: { createdAt: { gte: new Date(Date.now() - 60 * 60 * 1_000) } },
+      });
+      const byType = await prisma.$queryRawUnsafe<Array<{ event_type: string; count: bigint }>>(
+        `SELECT event_type, COUNT(*)::bigint as count FROM idempotency_keys WHERE created_at >= NOW() - INTERVAL '24 hours' GROUP BY event_type`,
+      );
+      return reply.status(200).send({
+        total_keys: totalKeys,
+        last_hour: lastHour,
+        by_type_last_24h: byType.reduce((acc, r) => ({ ...acc, [r.event_type]: Number(r.count) }), {}),
+      });
+    } catch (err) {
+      return reply.status(503).send({ error: err instanceof Error ? err.message : 'Idempotency stats check failed' });
+    }
+  });
+
+  // ─── S14: Recovery state ───────────────────────────────────────────────
+  app.get('/api/v1/health/recovery', {
+    schema: {
+      description: 'S14: Recovery state after restart',
+      tags: ['Health', 'S14'],
+    },
+  }, async (_request, reply) => {
+    const state = getRecoveryState();
+    const backoffTracker = getBackoffTracker();
+    return reply.status(200).send({
+      ...state,
+      backoff_tracked: backoffTracker.size,
+    });
   });
 }

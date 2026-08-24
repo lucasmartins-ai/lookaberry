@@ -5,6 +5,7 @@ import { EmailAdapter } from '../../src/core/execution/adapters/email.js';
 import { renderEmailTemplate } from '../../src/core/email/template.js';
 import { emailTrackingRoutes } from '../../src/api/routes/emailTracking.js';
 import { emailWebhookRoutes } from '../../src/api/routes/emailWebhooks.js';
+import { processWebhookEvent as processWebhookEventImpl } from '../../src/core/execution/webhookIdempotency.js';
 import { computeSvixSignature } from '../../src/api/plugins/webhookAuth.js';
 import { buildServer } from '../../src/api/server.js';
 import type { ExecutionContext } from '../../src/core/execution/types.js';
@@ -504,7 +505,15 @@ describe('Email tracking endpoints', () => {
 
   async function buildTrackingApp(recordFeedback = vi.fn(), findMessage = vi.fn(), markEngagement = vi.fn().mockResolvedValue(undefined)) {
     const app = fastify();
-    await app.register(emailTrackingRoutes, { analytics: { recordFeedback }, findMessage, markEngagement });
+    // S14: Inject a no-op idempotency processor so tests don't depend on real DB
+    const noopTrackEvent = () =>
+      Promise.resolve({ alreadyProcessed: false, invalidTransition: false });
+    await app.register(emailTrackingRoutes, {
+      analytics: { recordFeedback },
+      findMessage,
+      markEngagement,
+      processTrackingEvent: noopTrackEvent,
+    });
     await app.ready();
     return app;
   }
@@ -607,7 +616,14 @@ describe('Resend email webhook route', () => {
 
   async function buildWebhookApp(recordFeedback = vi.fn(), findMessage = vi.fn()) {
     const app = fastify();
-    await app.register(emailWebhookRoutes, { analytics: { recordFeedback }, findMessage });
+    // S14: Inject a no-op idempotency processor so tests don't depend on real DB
+    const noopProcessEvent = (_payload: any) =>
+      Promise.resolve({ alreadyProcessed: false, invalidTransition: false, idempotencyKey: 'test' });
+    await app.register(emailWebhookRoutes, {
+      analytics: { recordFeedback },
+      findMessage,
+      processWebhookEvent: noopProcessEvent,
+    });
     await app.ready();
     return app;
   }

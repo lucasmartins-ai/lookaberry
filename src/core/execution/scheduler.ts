@@ -1,6 +1,7 @@
 import { outreachQueue } from '../queues/queue.js';
 import { enqueueIdempotent } from '../queues/helpers.js';
 import { prisma } from '../../db/client.js';
+import { getMemoryLock } from './locking.js';
 
 export interface SequenceSchedulerOptions {
   /** Polling interval in milliseconds (default: 60_000 = 60s) */
@@ -82,7 +83,16 @@ export class SequenceScheduler {
 
     let enqueued = 0;
 
+    const memLock = getMemoryLock();
+
     for (const seq of sequences) {
+      // S14: Per-sequence lock prevents scheduler→dispatcher race
+      const seqLockKey = `seq:${seq.id}`;
+      if (!memLock.tryAcquire(seqLockKey, 'scheduler')) {
+        // Dispatcher is already working on this sequence — skip enqueue
+        continue;
+      }
+
       // Deterministic job ID prevents duplicate dispatch jobs when a Redis blip
       // causes a previous add to be retried on the next tick.
       const jobId = `dispatch-${seq.id}`;
@@ -102,7 +112,9 @@ export class SequenceScheduler {
           `[SequenceScheduler] Could not enqueue sequence ${seq.id}: ${result.error}`,
         );
       }
-      // result.enqueued === false without error → already enqueued (dedupe), skip
+
+      // Release lock after enqueue so the dispatcher can pick it up
+      memLock.release(seqLockKey);
     }
 
     return enqueued;

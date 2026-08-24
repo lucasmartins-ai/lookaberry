@@ -18,6 +18,7 @@ import { emailTrackingRoutes } from '../api/routes/emailTracking.js';
 import { emailWebhookRoutes } from '../api/routes/emailWebhooks.js';
 import { whatsappWebhookRoutes } from '../api/routes/whatsappWebhooks.js';
 import { campaignRoutes } from '../api/routes/campaigns.js';
+import { adminRoutes } from '../api/routes/admin.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = fastify({
@@ -93,6 +94,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(emailWebhookRoutes);
   await app.register(whatsappWebhookRoutes);
   await app.register(campaignRoutes);
+  await app.register(adminRoutes);
 
   return app;
 }

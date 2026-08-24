@@ -74,6 +74,9 @@ const envSchema = z.object({
   GLOBAL_MAX_MESSAGES_PER_MINUTE: z.coerce.number().default(60),
   GLOBAL_MAX_MESSAGES_PER_HOUR: z.coerce.number().default(1000),
   PER_CHANNEL_MAX_PER_MINUTE: z.coerce.number().default(20),
+
+  // S15: Security & Governance
+  ANONYMIZATION_SALT: z.string().default('lookaberry-anonymization-v1'),
 });
 
 export const config = envSchema.parse(process.env);

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { analyticsService } from '../../core/analytics/service.js';
 import { prisma } from '../../db/client.js';
 import { markMessageEngagement, type MessageEngagementType } from '../../core/execution/feedbackLoop.js';
+import { processWebhookEvent, createWebhookStoreFromPrisma, type WebhookEventResult } from '../../core/execution/webhookIdempotency.js';
 import type { RecordLeadInteractionFeedbackInput } from '../../mcp/schemas/analytics.js';
 
 const NO_CACHE_HEADERS = 'no-store, no-cache, must-revalidate, max-age=0';
@@ -33,6 +34,8 @@ export interface EmailTrackingDependencies {
   findMessage?: (messageId: string) => Promise<MessageContext | null>;
   /** Injectable S10 engagement timestamp writer (tests) */
   markEngagement?: (messageId: string, interactionType: MessageEngagementType) => Promise<void>;
+  /** S14: Injectable idempotent webhook processor (tests). Takes a single payload. */
+  processTrackingEvent?: (payload: { messageId: string; leadId: string; eventType: 'OPEN' | 'CLICK' }) => Promise<{ alreadyProcessed: boolean; invalidTransition: boolean; currentStatus?: string }>;
 }
 
 export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrackingDependencies = {}) {
@@ -40,11 +43,42 @@ export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrack
   const findMessage = opts.findMessage ?? findMessageContext;
   const markEngagement = opts.markEngagement ?? ((messageId: string, interactionType: MessageEngagementType) => markMessageEngagement(messageId, interactionType));
 
-  /** Record an OPEN/CLICK event. Never throws — tracking must not break the pixel/redirect. */
+  // S14: Idempotency processor (injectable for tests, falls back to real store)
+  const processTrackingEvent = opts.processTrackingEvent
+    ?? (() => {
+      try {
+        const store = createWebhookStoreFromPrisma(prisma);
+        return (payload: { messageId: string; leadId: string; eventType: 'OPEN' | 'CLICK' }) =>
+          processWebhookEvent(store, payload);
+      } catch {
+        // Model not available — skip idempotency
+        return () => Promise.resolve({ alreadyProcessed: false, invalidTransition: false });
+      }
+    })();
+
+  /** Record an OPEN/CLICK event with idempotency. Never throws — tracking must not break the pixel/redirect. */
   async function record(messageId: string, interactionType: 'OPEN' | 'CLICK', correlationId?: string): Promise<void> {
     try {
       const msg = await findMessage(messageId);
       if (!msg) return;
+
+      // S14: Idempotency check first
+      const eventResult = await processTrackingEvent({
+        messageId,
+        leadId: msg.leadId,
+        eventType: interactionType,
+      });
+
+      if (eventResult.alreadyProcessed) {
+        app.log.info({ msg: 'email_tracking_duplicate', interactionType, messageId, correlationId });
+        return;
+      }
+
+      if (eventResult.invalidTransition) {
+        app.log.warn({ msg: 'email_tracking_invalid_transition', interactionType, messageId, fromStatus: eventResult.currentStatus, correlationId });
+        return;
+      }
+
       const feedback = analytics.recordFeedback({
         campaign_id: msg.campaignId,
         lead_id: msg.leadId,

@@ -19,8 +19,34 @@ export interface CampaignAnalytics {
   by_channel: Record<string, number>;
 }
 
+export interface LeadInteraction {
+  id: string;
+  channel: string;
+  status: string;
+  subject: string | null;
+  body: string;
+  sent_at: string | null;
+  opened_at: string | null;
+  clicked_at: string | null;
+  replied_at: string | null;
+  created_at: string;
+}
+
+export interface LeadDetail {
+  lead: {
+    id: string;
+    full_name: string;
+    email: string | null;
+    company: string | null;
+    title: string | null;
+    linkedin_url: string | null;
+  };
+  interactions: LeadInteraction[];
+}
+
 export interface CampaignMessage {
   id: string;
+  lead_id?: string;
   lead_name: string;
   lead_email: string | null;
   channel: string;
@@ -45,6 +71,9 @@ export interface ABVariant {
   variantWeight: number;
   active: boolean;
   isWinner?: boolean;
+  conversionRate: number;
+  posteriorMean: number;
+  confidenceInterval95: [number, number];
 }
 
 export interface ABTestGroup {
@@ -52,6 +81,9 @@ export interface ABTestGroup {
   variants: ABVariant[];
   totalImpressions: number;
   hasWinner: boolean;
+  minSamplesRequired: number;
+  requiredConfidence: number;
+  bestVariantProbability: number | null;
 }
 
 export interface CadenceChannelSlot {
@@ -70,6 +102,37 @@ export interface CadenceState {
     limitPerHour: number;
   };
   nextAvailableMs: number;
+}
+
+export interface SyncHealth {
+  last_sync_at: string | null;
+  latest_message_at: string | null;
+  latest_campaign_update_at: string | null;
+  api_version: string;
+  error?: string;
+}
+
+export interface FilterState {
+  channel: string;
+  status: string;
+  variant: string;
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface CampaignActionResponse {
+  id: string;
+  is_active: boolean;
+  action: 'pause' | 'resume' | 'terminate';
+  terminated: boolean;
+}
+
+export interface ConversionRates {
+  deliveryRate: number;
+  openRate: number;
+  clickRate: number;
+  replyRate: number;
+  bounceRate: number;
 }
 
 export const funnelMetrics = [

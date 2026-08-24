@@ -248,6 +248,8 @@ model Lead {
   timezone           String?     @db.VarChar(50)
   status             LeadStatus  @default(DISCOVERED)
   metadata           Json?       @default("{}")
+  anonymizedAt       DateTime?   @map("anonymized_at") @db.Timestamptz(6)
+  consentedAt        DateTime?   @map("consented_at") @db.Timestamptz(6)
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -685,4 +687,219 @@ model Interaction {
   @@index([companyId, occurredAt], map: "idx_interactions_company_occurred")
   @@index([personId, occurredAt], map: "idx_interactions_person_occurred")
   @@map("interactions")
+}
+
+// ─────────────────────────── S14: Reliability Models ───────────────────────────
+
+enum DLQJobStatus {
+  PENDING
+  RESOLVED
+  IGNORED
+
+  @@map("dlq_job_status_enum")
+}
+
+model IdempotencyKey {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  key         String   @unique @db.VarChar(100)
+  eventType   String   @map("event_type") @db.VarChar(50)
+  messageId   String   @map("message_id") @db.Uuid
+  leadId      String   @map("lead_id") @db.Uuid
+  payloadHash String   @default("") @map("payload_hash") @db.VarChar(32)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([messageId, eventType], map: "idx_idempotency_message_event")
+  @@index([leadId], map: "idx_idempotency_lead")
+  @@index([createdAt], map: "idx_idempotency_created")
+  @@map("idempotency_keys")
+}
+
+model DeadLetterJob {
+  id               String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  sequenceId       String       @map("sequence_id") @db.Uuid
+  jobData          Json         @default("{}") @map("job_data")
+  errorMessage     String       @map("error_message") @db.Text
+  errorStack       String?      @map("error_stack") @db.Text
+  attemptCount     Int          @default(0) @map("attempt_count")
+  firstFailedAt    DateTime     @default(now()) @map("first_failed_at") @db.Timestamptz(6)
+  deadLetteredAt   DateTime     @default(now()) @map("dead_lettered_at") @db.Timestamptz(6)
+  status           DLQJobStatus @default(PENDING)
+  resolvedBy       String?      @map("resolved_by") @db.VarChar(255)
+  resolutionNotes  String?      @map("resolution_notes") @db.Text
+  resolvedAt       DateTime?    @map("resolved_at") @db.Timestamptz(6)
+  replayable       Boolean      @default(true)
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([status], map: "idx_dlq_status")
+  @@index([sequenceId], map: "idx_dlq_sequence")
+  @@index([deadLetteredAt], map: "idx_dlq_dead_lettered")
+  @@index([createdAt], map: "idx_dlq_created")
+  @@map("dead_letter_jobs")
+}
+
+// ─────────────────────────── S15: Security & Governance ───────────────────────────
+
+enum ApiKeyPermission {
+  ADMIN
+  OPERATOR
+  VIEWER
+  CAMPAIGN_MANAGER
+
+  @@map("api_key_permission_enum")
+}
+
+enum AuditAction {
+  API_KEY_CREATED
+  API_KEY_ROTATED
+  API_KEY_REVOKED
+  API_KEY_USED
+  PERMISSION_GRANTED
+  PERMISSION_REVOKED
+  DATA_ANONYMIZED
+  DATA_DELETED
+  SUPPRESSION_ADDED
+  SUPPRESSION_REMOVED
+  LEAD_UNSUBSCRIBED
+  SEQUENCE_CANCELLED
+  CONFIG_CHANGED
+  LOGIN_FAILED
+  RATE_LIMIT_HIT
+  SECURITY_ALERT
+
+  @@map("audit_action_enum")
+}
+
+enum SuppressionType {
+  EMAIL
+  DOMAIN
+  LINKEDIN_URL
+
+  @@map("suppression_type_enum")
+}
+
+model ApiKey {
+  id           String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  key          String            @unique @db.VarChar(128)
+  name         String            @db.VarChar(255)
+  permission   ApiKeyPermission  @default(OPERATOR)
+  userId       String?           @map("user_id") @db.Uuid
+  teamId       String?           @map("team_id") @db.Uuid
+  campaignIds  String[]          @default([]) @map("campaign_ids")
+  active       Boolean           @default(true)
+  expiresAt    DateTime?         @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt   DateTime?         @map("last_used_at") @db.Timestamptz(6)
+  rotatedFrom  String?           @map("rotated_from") @db.VarChar(128)
+  version      Int               @default(1)
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  auditLogs AuditLog[]
+
+  @@index([active], map: "idx_api_keys_active")
+  @@index([userId], map: "idx_api_keys_user")
+  @@index([teamId], map: "idx_api_keys_team")
+  @@index([expiresAt], map: "idx_api_keys_expires")
+  @@map("api_keys")
+}
+
+model User {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email     String    @unique @db.VarChar(320)
+  name      String    @db.VarChar(255)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  apiKeys       ApiKey[]
+  userTeams     UserTeam[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Team {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name      String   @db.VarChar(255)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  apiKeys   ApiKey[]
+  userTeams UserTeam[]
+
+  @@map("teams")
+}
+
+model UserTeam {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  teamId    String   @map("team_id") @db.Uuid
+  role      ApiKeyPermission @default(OPERATOR)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId], map: "uq_user_team_user_team")
+  @@map("user_teams")
+}
+
+model AuditLog {
+  id           String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  action       AuditAction
+  actorId      String?      @map("actor_id") @db.Uuid
+  apiKeyId     String?      @map("api_key_id") @db.Uuid
+  targetType   String?      @map("target_type") @db.VarChar(100)
+  targetId     String?      @map("target_id") @db.VarChar(100)
+  details      Json         @default("{}")
+  ip           String?      @db.VarChar(45)
+  userAgent    String?      @map("user_agent") @db.VarChar(500)
+  correlationId String?     @map("correlation_id") @db.VarChar(100)
+  severity     String       @default("INFO") @db.VarChar(20)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor  User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  apiKey ApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt], map: "idx_audit_log_action_created")
+  @@index([actorId, createdAt], map: "idx_audit_log_actor_created")
+  @@index([apiKeyId, createdAt], map: "idx_audit_log_api_key_created")
+  @@index([severity, createdAt], map: "idx_audit_log_severity_created")
+  @@index([createdAt], map: "idx_audit_log_created")
+  @@map("audit_logs")
+}
+
+model GlobalSuppressionList {
+  id              String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  suppressionType SuppressionType  @map("suppression_type")
+  value           String           @db.VarChar(500)
+  reason          String?          @db.Text
+  addedBy         String?          @map("added_by") @db.VarChar(255)
+  leadId          String?          @map("lead_id") @db.Uuid
+  campaignId      String?          @map("campaign_id") @db.Uuid
+  isAutomatic     Boolean          @default(false) @map("is_automatic")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([suppressionType, value], map: "uq_suppression_type_value")
+  @@index([suppressionType], map: "idx_suppression_type")
+  @@index([leadId], map: "idx_suppression_lead")
+  @@map("global_suppression_list")
+}
+
+// ─────────────────────────── S15: Lead Anonymization Fields ───────────────────────────
+
+model DataRetentionPolicy {
+  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  entityType      String   @unique @map("entity_type") @db.VarChar(100)
+  retentionDays   Int      @map("retention_days")
+  autoAnonymize   Boolean  @default(false) @map("auto_anonymize")
+  autoDelete      Boolean  @default(false) @map("auto_delete")
+  description     String?  @db.Text
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("data_retention_policies")
 }

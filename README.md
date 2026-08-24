@@ -8,14 +8,14 @@
 [![MCP](https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2.svg)](https://modelcontextprotocol.io)
 [![Fastify](https://img.shields.io/badge/Fastify-5.2-black.svg)](https://fastify.dev)
 [![BullMQ](https://img.shields.io/badge/BullMQ-Redis%20Queues-red.svg)](https://bullmq.io)
-[![Tests](https://img.shields.io/badge/tests-172%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-560%20passing-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## 🏷️ Tags & Keywords
 
-`ai-agent` • `model-context-protocol` • `mcp-server` • `gtm-outbound` • `b2b-sales-intelligence` • `pgvector` • `hnsw-indexing` • `zero-token-waste` • `lead-scoring` • `intent-signals` • `waterfall-enrichment` • `cold-email-automation` • `linkedin-outreach` • `sales-enablement` • `prompt-caching` • `anti-ban` • `typescript` • `fastify` • `bullmq` • `redis` • `autonomous-outreach`
+`ai-agent` • `model-context-protocol` • `mcp-server` • `gtm-outbound` • `b2b-sales-intelligence` • `pgvector` • `hnsw-indexing` • `zero-token-waste` • `lead-scoring` • `intent-signals` • `waterfall-enrichment` • `cold-email-automation` • `linkedin-outreach` • `sales-enablement` • `prompt-caching` • `anti-ban` • `typescript` • `fastify` • `bullmq` • `redis` • `autonomous-outreach` • `rbac` • `audit-log` • `lgpd` • `gdpr` • `data-privacy` • `anonymization` • `suppression-list`
 
 ---
 
@@ -32,6 +32,8 @@
 - 🛡️ **Anti-Ban Multi-Channel Dispatcher**: Enforces daily account quotas, Gaussian human-like delays (45s–210s), and automatic 48-hour safety cool-downs.
 - 🔁 **Closed-Loop RL Feedback**: Captures email/LinkedIn interactions (Sent, Opened, Clicked, Replied, Bounced), classifies sentiment with Haiku, pauses sequences upon response, and automatically boosts predictive intent weights (+5 on positive reply).
 - 🤖 **Autonomous Outreach Loop (S6)**: SequenceScheduler polls for due sequences, dispatcher processes one step at a time with configurable delays, inbox worker reads LinkedIn replies, feedback loop adjusts intent weights — the system walks alone.
+- 🔐 **Security & Governance (S15)**: API key lifecycle (create/rotate/revoke), RBAC (Admin/Operator/Campaign Manager/Viewer), campaign isolation, admin audit trail, global suppression list with multi-channel opt-out cascade, data retention & anonymization (LGPD/GDPR), secrets masking in logs and webhook payloads, full threat model.
+- 📊 **Reliability (S14)**: Event idempotency (DB UNIQUE + negative cache), exponential backoff with full jitter, Dead-Letter Queue for failed jobs, distributed locking, graceful recovery on restart.
 
 ---
 
@@ -46,15 +48,18 @@
 | **Sprint 5** | **Multi-Channel Dispatcher & Anti-Ban State Machine** | `gtm_schedule_outreach_sequence` | 🟢 **Operational** |
 | **Sprint 6** | **Closed-Loop Analytics, Feedback & Autonomous Loop** | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | 🟢 **Operational** |
 | **GTM Brain 2.0** | **Entity Graph, Intent Providers, Decision Engine, Channel Abstraction, Execution Protocol** | `gtm_evaluate_opportunity` | 🟢 **Operational** |
+| **Sprint 7** | **Auth, Rate Limiting & Webhook Signatures** | — (hardening) | 🟢 **Operational** |
+| **Sprint 8** | **Email Execution (Resend/SMTP)** | — (email adapter) | 🟢 **Operational** |
+| **Sprint 12** | **Production Hardening & Observability** | — (health checks, DLQ endpoints) | 🟢 **Operational** |
+| **Sprint 14** | **Reliability — Idempotency, Backoff, DLQ, Locking, Recovery** | — (infrastructure) | 🟢 **Operational** |
+| **Sprint 15** | **Security & Governance — API Key Lifecycle, RBAC, Audit, Suppression, Anonymization** | — (admin API) | 🟢 **Operational** |
 
 ### Upcoming Sprints
 
 | Sprint | Focus | MCP Tools |
 | :--- | :--- | :--- |
-| **Sprint 7** | **Authentication, Rate Limiting & Security Hardening** | Auth middleware, API keys, webhook signatures |
-| **Sprint 8** | **Email Execution (Smartlead/Resend SMTP)** | `gtm_send_email`, email adapter real implementation |
 | **Sprint 9** | **WhatsApp Execution & Multi-Account LinkedIn** | `gtm_send_whatsapp`, account rotation, session management |
-| **Sprint 10** | **Ops Dashboard, Real-Time Monitoring & Alerting** | Admin UI, queue monitoring, alert webhooks |
+| **Sprint 10** | **Ops Dashboard, Real-Time Monitoring, Campaign Engine** | Dashboard UI, queue monitoring, alert webhooks |
 
 ---
 
@@ -273,7 +278,7 @@ claude mcp add lookaberry npx -y tsx src/mcp/transports/stdio.ts
 LookaBerry includes a complete multi-tier testing suite:
 
 ```bash
-# 1. Run all unit tests (172 passing)
+# 1. Run all unit tests (560 passing)
 npm test
 
 # 2. Run official MCP client smoke test (validating all 9 tools)
@@ -289,7 +294,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-> **Note**: 4 integration tests require PostgreSQL (127.0.0.1:5433) and Redis (localhost:6379). Unit tests (172) pass without infrastructure.
+> **Note**: 4 integration tests require PostgreSQL (127.0.0.1:5433) and Redis (localhost:6379). Unit tests (560) pass without infrastructure.
 
 ---
 
@@ -314,17 +319,24 @@ LookaBerry/
 │   │   ├── decision/        # Deterministic opportunity scoring & action recommendations
 │   │   ├── evidence/        # Entity graph—source, person, identity, evidence, observation, relationship
 │   │   ├── channels/        # Channel abstraction (ChannelId, ChannelProfile, ChannelRegistry)
+│   │   ├── security/        # S15: API keys, RBAC, audit trail, suppression, retention, secrets masking
 │   │   ├── enrichment/      # Waterfall enrichment orchestrator with MX verification
 │   │   ├── personalization/ # Message synthesizer, static prompt cache & guardrails
 │   │   ├── outreach/        # Sequence state machine, human delay & anti-ban rules
-│   │   ├── execution/       # Browser Execution Protocol (S5) + Autonomous Loop (S6)
+│   │   ├── execution/       # Browser Execution Protocol (S5) + Autonomous Loop (S6) + S14 Reliability
 │   │   │   ├── adapters/    # LinkedInAdapter, EmailAdapter, WhatsAppAdapter, ManualAdapter
 │   │   │   ├── antigravity.ts  # Antigravity Chrome extension HTTP client
 │   │   │   ├── router.ts    # ExecutionRouter — routes actions to channel adapters
 │   │   │   ├── dispatcher.ts   # BullMQ worker — processes one sequence step at a time
 │   │   │   ├── scheduler.ts    # SequenceScheduler — polls for due sequences
 │   │   │   ├── inboxWorker.ts  # InboxWorker — reads LinkedIn replies, classifies sentiment
-│   │   │   └── feedbackLoop.ts # FeedbackLoop — delivery verification & intent weight adjustment
+│   │   │   ├── feedbackLoop.ts # FeedbackLoop — delivery verification & intent weight adjustment
+│   │   │   ├── idempotency.ts   # S14: Event deduplication & safe replay
+│   │   │   ├── backoff.ts       # S14: Exponential backoff with full jitter
+│   │   │   ├── dlq.ts           # S14: Dead-Letter Queue
+│   │   │   ├── locking.ts       # S14: Distributed locking via pg_advisory_lock
+│   │   │   ├── recovery.ts      # S14: Graceful restart & reconnection recovery
+│   │   │   └── webhookIdempotency.ts # S14: Idempotent webhook event processing
 │   │   ├── analytics/       # Feedback classification & closed-loop RL metrics
 │   │   └── queues/          # BullMQ queue definitions and workers
 │   ├── mcp/
@@ -338,8 +350,8 @@ LookaBerry/
 │   │   └── plugins/         # OpenAPI 3.1 schema documentation
 │   └── index.ts             # Server entrypoint with all workers & scheduler
 └── tests/
-    ├── unit/                # 16 unit test files — 172 tests across all modules
-    ├── integration/         # Database, Fastify REST API, MCP, and evidence integration tests
+    ├── unit/                # 34 unit test files — 560 tests across all modules
+    ├── integration/         # Database, Fastify REST API, MCP, evidence, and S14 reliability integration tests
     ├── mcp-client-smoke.ts  # End-to-end MCP client smoke test
     └── beta-test-account.ts # Full beta test suite with test account simulation
 ```
@@ -355,6 +367,8 @@ LookaBerry/
 - [Implementation Status Audit](docs/IMPLEMENTATION_STATUS.md)
 - [Intent Providers Architecture](docs/INTENT_PROVIDERS.md)
 - [Entity & Evidence Graph Model](docs/EVIDENCE_MODEL.md)
+- [Security & Compliance (LGPD/GDPR)](docs/SECURITY_COMPLIANCE.md)
+- [Threat Model (S15)](docs/THREAT_MODEL.md)
 
 ---
 

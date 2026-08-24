@@ -1,15 +1,21 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, Beaker, CheckCircle2, Clock3, Mail, MousePointer2, Reply, Send, ShieldAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowLeft, Beaker, CheckCircle2, Clock3, Mail, MousePointer2, Reply, Send, ShieldAlert, User } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import type { CampaignAnalytics, CampaignMessage } from '@/lib/types';
+import type { Campaign, CampaignActionResponse, CampaignAnalytics, CampaignMessage, FilterState, SyncHealth } from '@/lib/types';
 import { FunnelChart } from '@/components/FunnelChart';
 import { StatCard } from '@/components/StatCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { FilterBar } from '@/components/FilterBar';
+import { AutoRefresh, useAutoRefresh } from '@/components/AutoRefresh';
+import { SyncStatusBar } from '@/components/SyncStatusBar';
+import { ConversionRatesCard } from '@/components/ConversionRatesCard';
+import { CampaignActions } from '@/components/CampaignActions';
+import { LeadDrillDown } from '@/components/LeadDrillDown';
 
 const statDefinitions = [
   { key: 'sent', label: 'Sent', icon: Send, tone: 'cyan' as const },
@@ -33,31 +39,90 @@ function statusClass(status: string) {
   return 'border-line bg-elevated text-muted';
 }
 
+const DEFAULT_FILTERS: FilterState = { channel: '', status: '', variant: '', periodStart: '', periodEnd: '' };
+
+function buildFilterParams(filters: FilterState): string {
+  const params = new URLSearchParams();
+  if (filters.channel) params.set('channel', filters.channel);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.periodStart) params.set('period_start', filters.periodStart);
+  if (filters.periodEnd) params.set('period_end', filters.periodEnd);
+  return params.toString();
+}
+
 export function CampaignDetailClient({ campaignId }: { campaignId: string }) {
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [analytics, setAnalytics] = useState<CampaignAnalytics | null>(null);
   const [messages, setMessages] = useState<CampaignMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [syncHealth, setSyncHealth] = useState<SyncHealth | null>(null);
+  const [drillDownLead, setDrillDownLead] = useState<{ id: string; name: string } | null>(null);
+
+  const load = useCallback(async () => {
+    const filterQs = buildFilterParams(filters);
+    try {
+      const [campaignData, analyticsData, messagesData] = await Promise.all([
+        apiFetch<Campaign[]>(`/api/v1/campaigns`).then(list => list.find(c => c.id === campaignId) ?? null),
+        apiFetch<CampaignAnalytics>(`/api/v1/campaigns/${campaignId}/analytics${filterQs ? `?${filterQs}` : ''}`),
+        apiFetch<CampaignMessage[]>(`/api/v1/campaigns/${campaignId}/messages?limit=25${filterQs ? `&${filterQs}` : ''}`),
+      ]);
+      setCampaign(campaignData);
+      setAnalytics(analyticsData);
+      setMessages(messagesData);
+      setError(null);
+
+      try {
+        const health = await apiFetch<SyncHealth>('/api/v1/health/sync');
+        setSyncHealth(health);
+      } catch {
+        setSyncHealth(null);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to load campaign');
+    } finally {
+      setLoading(false);
+    }
+  }, [campaignId, filters]);
 
   useEffect(() => {
-    let active = true;
-    Promise.all([
-      apiFetch<CampaignAnalytics>(`/api/v1/campaigns/${campaignId}/analytics`),
-      apiFetch<CampaignMessage[]>(`/api/v1/campaigns/${campaignId}/messages?limit=25`),
-    ]).then(([nextAnalytics, nextMessages]) => {
-      if (!active) return;
-      setAnalytics(nextAnalytics);
-      setMessages(nextMessages);
-    }).catch(cause => {
-      if (active) setError(cause instanceof Error ? cause.message : 'Unable to load campaign');
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; };
-  }, [campaignId]);
+    setLoading(true);
+    void load();
+  }, [load]);
 
-  if (loading) return <div className="h-96 animate-pulse rounded-lg border border-line bg-panel" aria-label="Loading campaign" />;
-  if (error || !analytics) return <div className="rounded-lg border border-coral/40 bg-coral/10 p-5 text-sm text-coral" role="alert">{error ?? 'Campaign analytics unavailable'}</div>;
+  const refresh = useAutoRefresh(load, { enabled: false });
+
+  const handleStatusChange = (result: CampaignActionResponse) => {
+    if (campaign) {
+      setCampaign({ ...campaign, is_active: result.is_active });
+      void refresh.doRefresh();
+    }
+  };
+
+  if (drillDownLead) {
+    return (
+      <LeadDrillDown
+        campaignId={campaignId}
+        leadId={drillDownLead.id}
+        leadName={drillDownLead.name}
+        onClose={() => setDrillDownLead(null)}
+      />
+    );
+  }
+
+  if (loading) return (
+    <div className="space-y-7">
+      <div className="h-96 animate-pulse rounded-lg border border-line bg-panel" aria-label="Loading campaign" />
+    </div>
+  );
+
+  if (error || !analytics) return (
+    <div className="space-y-7">
+      <Link href="/" className="inline-flex items-center gap-2 text-xs text-muted hover:text-ink"><ArrowLeft size={14} aria-hidden="true" /> All campaigns</Link>
+      <div className="rounded-lg border border-coral/40 bg-coral/10 p-5 text-sm text-coral" role="alert">{error ?? 'Campaign analytics unavailable'}</div>
+    </div>
+  );
 
   return (
     <div className="space-y-7">
@@ -67,18 +132,47 @@ export function CampaignDetailClient({ campaignId }: { campaignId: string }) {
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-mint">Campaign detail</p>
           <h1 className="mt-2 break-words text-3xl font-semibold text-ink">{analytics.campaign_name ?? campaignId}</h1>
         </div>
-        <Button variant="secondary" asChild><Link href={`/campaigns/${campaignId}/ab-tests`}><Beaker size={15} aria-hidden="true" /> A/B tests</Link></Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <AutoRefresh
+            autoEnabled={refresh.autoEnabled}
+            refreshing={refresh.refreshing}
+            intervalMs={refresh.intervalMs}
+            minIntervalMs={refresh.minIntervalMs}
+            maxIntervalMs={refresh.maxIntervalMs}
+            onToggle={refresh.setAutoEnabled}
+            onIntervalChange={refresh.setInterval}
+            onManualRefresh={() => void refresh.doRefresh()}
+          />
+          <CampaignActions
+            campaignId={campaignId}
+            isActive={campaign?.is_active ?? analytics.campaign_name !== null}
+            onStatusChange={handleStatusChange}
+          />
+          <Button variant="secondary" asChild>
+            <Link href={`/campaigns/${campaignId}/ab-tests`}><Beaker size={15} aria-hidden="true" /> A/B tests</Link>
+          </Button>
+        </div>
       </div>
+
+      <SyncStatusBar
+        syncHealth={syncHealth}
+        error={error}
+        isLoading={loading}
+        lastRefreshedAt={refresh.lastRefreshedAt}
+      />
+
+      <FilterBar filters={filters} onChange={setFilters} />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {statDefinitions.map(stat => <StatCard key={stat.key} label={stat.label} value={analytics[stat.key].toLocaleString()} icon={stat.icon} tone={stat.tone} />)}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className="grid gap-5 xl:grid-cols-[1fr_1fr_0.8fr]">
         <Card>
           <CardHeader><CardTitle>Conversion funnel</CardTitle></CardHeader>
           <CardContent><FunnelChart analytics={analytics} /></CardContent>
         </Card>
+        <ConversionRatesCard analytics={analytics} />
         <Card>
           <CardHeader><CardTitle>Channel mix</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -95,9 +189,42 @@ export function CampaignDetailClient({ campaignId }: { campaignId: string }) {
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="border-b border-line bg-elevated/40 text-[11px] uppercase tracking-[0.12em] text-muted"><tr><th className="px-5 py-3 font-medium">Lead</th><th className="px-5 py-3 font-medium">Channel</th><th className="px-5 py-3 font-medium">Status</th><th className="px-5 py-3 font-medium">Subject</th><th className="px-5 py-3 font-medium">Created</th></tr></thead>
+              <thead className="border-b border-line bg-elevated/40 text-[11px] uppercase tracking-[0.12em] text-muted">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Lead</th>
+                  <th className="px-5 py-3 font-medium">Channel</th>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Subject</th>
+                  <th className="px-5 py-3 font-medium">Created</th>
+                  <th className="px-5 py-3 font-medium"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-line">
-                {messages.map(message => <tr key={message.id} className="hover:bg-elevated/30"><td className="px-5 py-4"><p className="font-medium text-ink">{message.lead_name}</p><p className="mt-1 text-xs text-muted">{message.lead_email ?? 'No email'}</p></td><td className="px-5 py-4 text-xs text-muted">{message.channel.replaceAll('_', ' ')}</td><td className="px-5 py-4"><Badge className={statusClass(message.status)}>{message.status}</Badge></td><td className="max-w-[260px] px-5 py-4"><p className="truncate text-ink">{message.subject ?? message.body_preview}</p></td><td className="whitespace-nowrap px-5 py-4 text-xs text-muted">{formatDate(message.created_at)}</td></tr>)}
+                {messages.map(message => (
+                  <tr key={message.id} className="hover:bg-elevated/30">
+                    <td className="px-5 py-4">
+                      <p className="font-medium text-ink">{message.lead_name}</p>
+                      <p className="mt-1 text-xs text-muted">{message.lead_email ?? 'No email'}</p>
+                    </td>
+                    <td className="px-5 py-4 text-xs text-muted">{message.channel.replaceAll('_', ' ')}</td>
+                    <td className="px-5 py-4"><Badge className={statusClass(message.status)}>{message.status}</Badge></td>
+                    <td className="max-w-[260px] px-5 py-4"><p className="truncate text-ink">{message.subject ?? message.body_preview}</p></td>
+                    <td className="whitespace-nowrap px-5 py-4 text-xs text-muted">{formatDate(message.created_at)}</td>
+                    <td className="px-5 py-4">
+                      {message.lead_id ? (
+                        <button
+                          type="button"
+                          onClick={() => setDrillDownLead({ id: message.lead_id!, name: message.lead_name })}
+                          className="inline-flex items-center gap-1 text-xs text-mint hover:text-ink"
+                          aria-label={`View ${message.lead_name} details`}
+                        >
+                          <User size={13} aria-hidden="true" />
+                          <span className="hidden sm:inline">View</span>
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

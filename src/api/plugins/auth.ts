@@ -2,6 +2,7 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config/env.js';
 import { prisma } from '../../db/client.js';
+import type { ApiKeyRecord } from '../../core/security/apiKeys.js';
 
 const EXEMPT_PREFIXES = ['/health', '/docs', '/api/v1/email/track'];
 const WEBHOOK_ROUTE = '/api/v1/webhooks/outreach';
@@ -57,28 +58,77 @@ function getEnvKeys(): Set<string> {
   );
 }
 
-async function validateKey(key: string): Promise<boolean> {
-  // Check env var first (fast path)
+async function validateKey(key: string): Promise<ApiKeyRecord | null> {
+  // Check env var first (fast path) — these are legacy keys without DB records
   const envKeys = getEnvKeys();
-  if (envKeys.has(key)) return true;
+  if (envKeys.has(key)) {
+    // Synthesize a minimal record for env-var-only keys (ADMIN level)
+    return {
+      id: 'env-key',
+      key,
+      name: 'env-var-key',
+      permission: 'ADMIN' as any,
+      userId: null,
+      teamId: null,
+      campaignIds: [],
+      active: true,
+      expiresAt: null,
+      lastUsedAt: null,
+      version: 0,
+      createdAt: new Date(0),
+    };
+  }
 
   // Check cache
   const cached = keyCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return true;
+  if (cached && cached.expiresAt > Date.now()) {
+    // Return a minimal record from cache (we cache only valid keys)
+    return {
+      id: 'cached-key',
+      key,
+      name: 'cached',
+      permission: 'ADMIN' as any,
+      userId: null,
+      teamId: null,
+      campaignIds: [],
+      active: true,
+      expiresAt: null,
+      lastUsedAt: null,
+      version: 0,
+      createdAt: new Date(0),
+    };
+  }
 
-  // Check DB (with 60s TTL cache) — uses any cast since ApiKey model may not exist in schema yet
+  // Check DB (S15: ApiKey model)
   try {
     const client = prisma as any;
     const dbKey = await client.apiKey?.findUnique({ where: { key } });
     if (dbKey && dbKey.active) {
+      // Check expiry
+      if (dbKey.expiresAt && new Date(dbKey.expiresAt) < new Date()) {
+        // Auto-deactivate expired keys
+        await client.apiKey.update({
+          where: { id: dbKey.id },
+          data: { active: false },
+        }).catch(() => {});
+        return null;
+      }
+      // Update lastUsedAt (fire-and-forget)
+      client.apiKey.update({
+        where: { id: dbKey.id },
+        data: { lastUsedAt: new Date() },
+      }).catch(() => {});
+
+      // Cache the hit
       keyCache.set(key, { key, expiresAt: Date.now() + 60_000 });
-      return true;
+
+      return dbKey as ApiKeyRecord;
     }
   } catch {
     // DB unreachable or model missing — fall through to deny
   }
 
-  return false;
+  return null;
 }
 
 async function authenticateApiKey(
@@ -106,12 +156,16 @@ async function authenticateApiKey(
     return;
   }
 
-  const valid = await validateKey(apiKey);
+  const keyRecord = await validateKey(apiKey);
 
-  if (valid) {
+  if (keyRecord) {
+    // Attach the API key record to the request for downstream permission checks
+    (request as any).__apiKey = keyRecord;
     request.log.info({
       msg: 'auth_success',
       keyFingerprint: fingerprint(apiKey),
+      keyId: keyRecord.id,
+      permission: keyRecord.permission,
       ip: request.ip,
       route: url,
     });
@@ -152,12 +206,16 @@ export default fp(
         });
       }
 
-      const valid = await validateKey(apiKey);
+      const keyRecord = await validateKey(apiKey);
 
-      if (valid) {
+      if (keyRecord) {
+        // Attach API key record to request
+        (request as any).__apiKey = keyRecord;
         request.log.info({
           msg: 'auth_success',
           keyFingerprint: fingerprint(apiKey),
+          keyId: keyRecord.id,
+          permission: keyRecord.permission,
           ip: request.ip,
           route: url,
         });

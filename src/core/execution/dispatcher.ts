@@ -24,6 +24,15 @@ import type { RecommendedAction } from '../decision/types.js';
 import type { ExecutionContext, ExecutionResult } from './types.js';
 import type { ScheduleConfig } from './smartScheduler.js';
 import type { TestVariant } from './abTesting.js';
+import {
+  buildIdempotencyKey,
+  checkAndRecordIdempotency,
+  IdempotencyCache,
+  type IdempotencyStore,
+} from './idempotency.js';
+import { getBackoffTracker, remainingWaitMs } from './backoff.js';
+import { deadLetterJob, type DLQStore } from './dlq.js';
+import { getMemoryLock } from './locking.js';
 
 export interface DispatcherJobData {
   sequenceId: string;
@@ -52,11 +61,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** In-memory cache for send idempotency */
+const dispatcherCache = new IdempotencyCache(50_000);
+
+/**
+ * Check if a message has already been sent (idempotency guard).
+ */
+async function checkSendIdempotency(
+  messageId: string,
+  leadId: string,
+  client: any,
+): Promise<boolean> {
+  const idemKey = buildIdempotencyKey(messageId, leadId, 'SEND');
+  if (dispatcherCache.has(idemKey.key)) return true;
+
+  try {
+    const store = client as unknown as IdempotencyStore;
+    const result = await checkAndRecordIdempotency(store, idemKey);
+    if (result.processed) {
+      dispatcherCache.set(idemKey.key);
+      return true;
+    }
+    dispatcherCache.set(idemKey.key);
+    return false;
+  } catch {
+    return false; // DB unavailable — proceed; duplicate send is better than drop
+  }
+}
+
 /**
  * Create the outreach dispatcher BullMQ worker.
  *
  * S10: Integrated with Smart Scheduler, Branching, A/B Testing,
  * Cadence Governor, and Lead Enricher.
+ * S14: Idempotent sends, exponential backoff, DLQ, in-memory locking.
  */
 export function createDispatcherWorker(
   deps: DispatcherDependencies = {},
@@ -108,15 +146,7 @@ export function createDispatcherWorker(
 
 /**
  * S10: Process the current step(s) in an outreach sequence.
- *
- * Per-lead aware: each lead may be at a different step due to branching.
- * Integrates:
- * - Lead Enricher (timezone detection, contact validation)
- * - Smart Scheduler (business hours check)
- * - Cadence Governor (global throttling)
- * - A/B Testing (variant selection, impression recording)
- * - Conditional Branching (per-lead step advancement)
- * - Account Resolver (multi-account failover, from S9)
+ * S14: Added idempotent sends, backoff tracking, sequence-level locking, DLQ routing.
  */
 async function processSequenceStep(
   sequenceId: string,
@@ -126,512 +156,535 @@ async function processSequenceStep(
   const scheduleCfg = buildScheduleConfig();
   const cadenceGov = getCadenceGovernor();
   const scheduleWorker = new ScheduleWorker({ prisma });
+  const backoffTracker = getBackoffTracker();
+  const memLock = getMemoryLock();
 
-  // Load sequence with steps, leads, and lead-specific progress
-  const sequence = await prisma.outreachSequence.findUnique({
-    where: { id: sequenceId },
-    include: {
-      campaign: true,
-      leads: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          fullName: true,
-          title: true,
-          linkedinUrl: true,
-          email: true,
-          emailStatus: true,
-          phone: true,
-          phoneStatus: true,
-          timezone: true,
-          location: true,
-          companyId: true,
-          company: {
-            select: {
-              id: true,
-              name: true,
-              domain: true,
-              linkedinUrl: true,
+  // ── S14: Sequence-level locking ──
+  const seqLockKey = `seq:${sequenceId}`;
+  if (!memLock.tryAcquire(seqLockKey, 'dispatcher')) {
+    // Another dispatcher worker is processing this sequence
+    return { dispatched: 0, errors: 0, skipped: 0, nextRunAt: new Date(Date.now() + 10_000).toISOString() };
+  }
+
+  try {
+    // Load sequence with steps, leads, and lead-specific progress
+    const sequence = await prisma.outreachSequence.findUnique({
+      where: { id: sequenceId },
+      include: {
+        campaign: true,
+        leads: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            fullName: true,
+            title: true,
+            linkedinUrl: true,
+            email: true,
+            emailStatus: true,
+            phone: true,
+            phoneStatus: true,
+            timezone: true,
+            location: true,
+            companyId: true,
+            company: {
+              select: {
+                id: true,
+                name: true,
+                domain: true,
+                linkedinUrl: true,
+              },
+            },
+            sequenceStates: {
+              where: { sequenceId },
+              select: { currentStepIndex: true, status: true, pausedUntil: true },
             },
           },
-          sequenceStates: {
-            where: { sequenceId },
-            select: { currentStepIndex: true, status: true, pausedUntil: true },
+        },
+        steps: {
+          orderBy: { stepOrder: 'asc' },
+          include: {
+            messages: {
+              where: {
+                OR: [
+                  { status: 'QUEUED' },
+                  { status: 'SCHEDULED' },
+                ],
+              },
+              orderBy: { createdAt: 'asc' },
+            },
           },
         },
       },
-      steps: {
-        orderBy: { stepOrder: 'asc' },
-        include: {
-          messages: {
-            where: {
-              OR: [
-                { status: 'QUEUED' },
-                { status: 'SCHEDULED' },
-              ],
-            },
-            orderBy: { createdAt: 'asc' },
-          },
-        },
-      },
-    },
-  });
+    });
 
-  if (!sequence) {
-    throw new Error(`Sequence not found: ${sequenceId}`);
-  }
-
-  if (sequence.status !== 'ACTIVE') {
-    return { dispatched: 0, errors: 0, skipped: 0, nextRunAt: null };
-  }
-
-  let dispatched = 0;
-  let errors = 0;
-  let skipped = 0;
-
-  for (const lead of sequence.leads) {
-    // ── S10: Determine which step this lead is on ──
-    const leadState = lead.sequenceStates?.[0];
-    const leadStepIndex = leadState?.currentStepIndex ?? sequence.nextStep;
-
-    // Check if lead's sequence state is paused
-    if (leadState?.status === 'PAUSED') {
-      if (leadState.pausedUntil && new Date(leadState.pausedUntil) > new Date()) {
-        continue; // Still paused
-      }
+    if (!sequence) {
+      throw new Error(`Sequence not found: ${sequenceId}`);
     }
 
-    // Check if lead's sequence state is completed
-    if (leadState?.status === 'COMPLETED') continue;
+    if (sequence.status !== 'ACTIVE') {
+      return { dispatched: 0, errors: 0, skipped: 0, nextRunAt: null };
+    }
 
-    const currentStep = sequence.steps[leadStepIndex];
-    if (!currentStep || !currentStep.active) {
-      // No more steps for this lead — mark as completed
-      if (leadState) {
-        await prisma.leadSequenceState.update({
-          where: { id: leadState.id ?? undefined },
-          data: { status: 'COMPLETED' },
+    let dispatched = 0;
+    let errors = 0;
+    let skipped = 0;
+
+    for (const lead of sequence.leads) {
+      // ── S10: Determine which step this lead is on ──
+      const leadState = lead.sequenceStates?.[0];
+      const leadStepIndex = leadState?.currentStepIndex ?? sequence.nextStep;
+
+      if (leadState?.status === 'PAUSED') {
+        if (leadState.pausedUntil && new Date(leadState.pausedUntil) > new Date()) {
+          continue;
+        }
+      }
+      if (leadState?.status === 'COMPLETED') continue;
+
+      const currentStep = sequence.steps[leadStepIndex];
+      if (!currentStep || !currentStep.active) {
+        if (leadState) {
+          await prisma.leadSequenceState.update({
+            where: { id: leadState.id ?? undefined },
+            data: { status: 'COMPLETED' },
+          }).catch(() => {});
+        }
+        continue;
+      }
+
+      const channelId = legacyChannelToChannelId(currentStep.channel) as ChannelId;
+      const profile = channelRegistry.getProfile(channelId);
+
+      // ── S10: Lead Enrichment ──
+      const enriched = await enrichLeadBeforeSend(
+        {
+          id: lead.id,
+          email: lead.email,
+          emailStatus: lead.emailStatus,
+          phone: lead.phone,
+          phoneStatus: lead.phoneStatus,
+          timezone: lead.timezone,
+          location: lead.location,
+        },
+        channelId,
+        { prisma, config: { defaultTimezone: scheduleCfg.defaultTimezone } },
+      );
+
+      if (enriched.skipped) {
+        console.log(`[Dispatcher] Skipping lead ${lead.id}: ${enriched.skipReason}`);
+        skipped++;
+        continue;
+      }
+
+      if (enriched.detectedTimezone && !lead.timezone) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { timezone: enriched.detectedTimezone },
+        }).catch(() => {});
+        lead.timezone = enriched.detectedTimezone;
+      }
+
+      if (enriched.emailValidation) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { emailStatus: enriched.emailValidation },
         }).catch(() => {});
       }
-      continue;
-    }
-
-    const channelId = legacyChannelToChannelId(currentStep.channel) as ChannelId;
-    const profile = channelRegistry.getProfile(channelId);
-
-    // ── S10: Lead Enrichment ──
-    const enriched = await enrichLeadBeforeSend(
-      {
-        id: lead.id,
-        email: lead.email,
-        emailStatus: lead.emailStatus,
-        phone: lead.phone,
-        phoneStatus: lead.phoneStatus,
-        timezone: lead.timezone,
-        location: lead.location,
-      },
-      channelId,
-      { prisma, config: { defaultTimezone: scheduleCfg.defaultTimezone } },
-    );
-
-    if (enriched.skipped) {
-      console.log(`[Dispatcher] Skipping lead ${lead.id}: ${enriched.skipReason}`);
-      skipped++;
-      continue;
-    }
-
-    // Persist detected timezone if found
-    if (enriched.detectedTimezone && !lead.timezone) {
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { timezone: enriched.detectedTimezone },
-      }).catch(() => {});
-      lead.timezone = enriched.detectedTimezone;
-    }
-
-    // Update email/phone status if validated
-    if (enriched.emailValidation) {
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { emailStatus: enriched.emailValidation },
-      }).catch(() => {});
-    }
-    if (enriched.phoneValidation) {
-      await prisma.lead.update({
-        where: { id: lead.id },
-        data: { phoneStatus: enriched.phoneValidation },
-      }).catch(() => {});
-    }
-
-    // ── S10: Smart Scheduler — business hours check ──
-    const schedulableLead = {
-      timezone: lead.timezone ?? enriched.detectedTimezone,
-      phone: lead.phone,
-      location: lead.location,
-    };
-
-    if (!shouldSendNow(schedulableLead, channelId, scheduleCfg)) {
-      const nextSlot = nextAvailableSlot(schedulableLead, channelId, scheduleCfg);
-      // Find or create the QUEUED message for this lead/step
-      const message = currentStep.messages.find((m: { leadId: string }) => m.leadId === lead.id);
-      if (message) {
-        await scheduleWorker.enqueueScheduled(prisma, message.id, nextSlot);
+      if (enriched.phoneValidation) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { phoneStatus: enriched.phoneValidation },
+        }).catch(() => {});
       }
-      skipped++;
-      continue;
-    }
 
-    // ── S10: Cadence Governor — acquire send slot ──
-    let slotResult = cadenceGov.acquireSendSlot(channelId);
-    let backoffAttempts = 0;
+      // ── S10: Smart Scheduler ──
+      const schedulableLead = {
+        timezone: lead.timezone ?? enriched.detectedTimezone,
+        phone: lead.phone,
+        location: lead.location,
+      };
 
-    while (!slotResult.allowed && backoffAttempts < 3) {
-      const backoffMs = Math.min(
-        (slotResult.retryAfterMs ?? 1000) + Math.random() * 500,
-        30_000,
+      if (!shouldSendNow(schedulableLead, channelId, scheduleCfg)) {
+        const nextSlot = nextAvailableSlot(schedulableLead, channelId, scheduleCfg);
+        const msg = currentStep.messages.find((m: { leadId: string }) => m.leadId === lead.id);
+        if (msg) {
+          await scheduleWorker.enqueueScheduled(prisma, msg.id, nextSlot);
+        }
+        skipped++;
+        continue;
+      }
+
+      // ── S10: Cadence Governor ──
+      let slotResult = cadenceGov.acquireSendSlot(channelId);
+      let slotBackoff = 0;
+      while (!slotResult.allowed && slotBackoff < 3) {
+        const waitMs = Math.min((slotResult.retryAfterMs ?? 1000) + Math.random() * 500, 30_000);
+        await sleep(waitMs);
+        slotResult = cadenceGov.acquireSendSlot(channelId);
+        slotBackoff++;
+      }
+
+      if (!slotResult.allowed) {
+        cadenceGov.releaseSendSlot(channelId);
+        return {
+          dispatched,
+          errors,
+          skipped,
+          nextRunAt: new Date(Date.now() + (slotResult.retryAfterMs ?? 60_000)).toISOString(),
+        };
+      }
+
+      // Find the QUEUED message
+      const message = currentStep.messages.find(
+        (m: { leadId: string; status: string }) => m.leadId === lead.id && m.status === 'QUEUED',
       );
-      await sleep(backoffMs);
-      slotResult = cadenceGov.acquireSendSlot(channelId);
-      backoffAttempts++;
+      if (!message) {
+        cadenceGov.releaseSendSlot(channelId);
+        continue;
+      }
+
+      // ── S14: Send Idempotency Check ──
+      const alreadySent = await checkSendIdempotency(message.id, lead.id, prisma);
+      if (alreadySent) {
+        console.log(`[Dispatcher] Message ${message.id} already sent — skipping`);
+        cadenceGov.releaseSendSlot(channelId);
+        continue;
+      }
+
+      // ── S14: Backoff Check ──
+      const backoffKey = `msg:${message.id}`;
+      if (!backoffTracker.canRetry(backoffKey)) {
+        if (backoffTracker.isExhausted(backoffKey)) {
+          cadenceGov.releaseSendSlot(channelId);
+          continue; // Sent to DLQ already
+        }
+        const waitMs = remainingWaitMs(backoffTracker.get(backoffKey));
+        await scheduleWorker.enqueueScheduled(prisma, message.id, new Date(Date.now() + waitMs));
+        cadenceGov.releaseSendSlot(channelId);
+        continue;
+      }
+
+      // ── S9: Account Resolution ──
+      let resolved = await resolveAccount(channelId, prisma);
+      let resolvedId = 'default';
+      if (!resolved) {
+        resolvedId = 'default';
+      } else {
+        resolvedId = resolved.id;
+      }
+
+      // ── S10: A/B Variant Selection ──
+      const variantGroup = currentStep.variantGroup;
+      let selectedStep = currentStep;
+
+      if (variantGroup) {
+        const variants: TestVariant[] = sequence.steps
+          .filter((s: any) => s.variantGroup === variantGroup && s.active)
+          .map((s: any) => ({
+            id: s.id,
+            stepOrder: s.stepOrder,
+            variantGroup: s.variantGroup ?? '',
+            variantWeight: s.variantWeight ?? 1.0,
+            impressions: s.impressions ?? 0,
+            opens: s.opens ?? 0,
+            replies: s.replies ?? 0,
+            clicks: s.clicks ?? 0,
+          }));
+
+        if (variants.length > 0) {
+          const chosen = selectVariant(variants, { leadId: lead.id });
+          selectedStep = sequence.steps.find((s: any) => s.id === chosen.id) ?? currentStep;
+        }
+      }
+
+      const messageToSend = selectedStep !== currentStep
+        ? selectedStep.messages?.find(
+            (m: { leadId: string; status: string }) => m.leadId === lead.id && m.status === 'QUEUED',
+          )
+        : message;
+
+      if (!messageToSend) {
+        cadenceGov.releaseSendSlot(channelId);
+        continue;
+      }
+
+      const capability = selectedStep.channel === 'LINKEDIN_CONNECT'
+        ? 'connect' as const
+        : 'sendMessage' as const;
+
+      // Anti-ban policy
+      const antiBan = applyAntiBanPolicy({
+        channel: channelId,
+        sentToday: resolved?.sentToday ?? 0,
+        dailyLimit: resolved?.dailyLimit ?? (profile?.defaultDailyLimit ?? 100),
+        pausedUntil: resolved?.pausedUntil instanceof Date
+          ? resolved.pausedUntil
+          : resolved?.pausedUntil
+            ? new Date(resolved.pausedUntil)
+            : null,
+      });
+
+      if (!antiBan.allowed) {
+        if (antiBan.pausedUntil && resolvedId !== 'default') {
+          await markAccountPaused(resolvedId, antiBan.pausedUntil, prisma);
+        }
+        cadenceGov.releaseSendSlot(channelId);
+        continue;
+      }
+
+      // Build execution context
+      const context: ExecutionContext = {
+        lead: {
+          id: lead.id,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
+          fullName: lead.fullName,
+          title: lead.title,
+          linkedinUrl: lead.linkedinUrl,
+          email: lead.email,
+          phone: lead.phone,
+          phoneStatus: lead.phoneStatus,
+        },
+        company: {
+          id: lead.company.id,
+          name: lead.company.name,
+          domain: lead.company.domain,
+          linkedinUrl: lead.company.linkedinUrl,
+        },
+        account: {
+          id: resolved?.id ?? 'default',
+          provider: resolved?.provider ?? channelId,
+          externalId: resolved?.externalId ?? 'default',
+          dailyLimit: resolved?.dailyLimit ?? (profile?.defaultDailyLimit ?? 100),
+          sentToday: resolved?.sentToday ?? 0,
+          pausedUntil: resolved?.pausedUntil instanceof Date
+            ? resolved.pausedUntil
+            : resolved?.pausedUntil
+              ? new Date(resolved.pausedUntil)
+              : null,
+          sessionKey: resolved?.sessionKey ?? null,
+        },
+        message: {
+          id: messageToSend.id,
+          subject: messageToSend.subject,
+          body: messageToSend.body,
+          outreachAccountId: resolvedId,
+        },
+        dryRun: false,
+      };
+
+      const action: RecommendedAction = {
+        channel: channelId,
+        capability,
+        timing: 'WITHIN_24H',
+        template: messageToSend.body,
+        rationale: `Sequence ${sequenceId} step ${selectedStep.stepOrder} for ${lead.firstName}`,
+      };
+
+      try {
+        let result = await router.execute(action, context);
+
+        // S9: Account failover
+        if (!result.success && !result.retryable && resolvedId !== 'default') {
+          const errorMsg = (result.error ?? '').toUpperCase();
+          if (errorMsg.includes('SESSION_EXPIRED') || errorMsg.includes('401')) {
+            await markAccountExpired(resolvedId, result.error ?? 'Session expired', prisma);
+          } else if (errorMsg.includes('403') || errorMsg.includes('FORBIDDEN') || errorMsg.includes('CAPTCHA')) {
+            await markAccountBlocked(resolvedId, result.error ?? 'Account blocked', prisma);
+          }
+
+          const nextAccount = await resolveAccount(channelId, prisma);
+          if (nextAccount) {
+            console.log(`[Dispatcher] Failover: ${resolvedId} → ${nextAccount.id}`);
+            result = await router.execute(action, {
+              ...context,
+              account: {
+                id: nextAccount.id,
+                provider: nextAccount.provider,
+                externalId: nextAccount.externalId,
+                dailyLimit: nextAccount.dailyLimit,
+                sentToday: nextAccount.sentToday,
+                pausedUntil: nextAccount.pausedUntil instanceof Date
+                  ? nextAccount.pausedUntil
+                  : nextAccount.pausedUntil
+                    ? new Date(nextAccount.pausedUntil)
+                    : null,
+                sessionKey: nextAccount.sessionKey,
+              },
+              message: { ...context.message, outreachAccountId: nextAccount.id },
+            });
+          }
+        }
+
+        await handleExecutionResult(prisma, messageToSend.id, result, sequenceId, resolvedId);
+
+        if (result.success) {
+          dispatched++;
+          backoffTracker.recordSuccess(backoffKey);
+
+          if (context.message.outreachAccountId && context.message.outreachAccountId !== 'default') {
+            await recordSent(context.message.outreachAccountId, prisma);
+          }
+
+          // S10: A/B impression
+          if (variantGroup) {
+            const delta = buildImpressionDelta(
+              {
+                id: selectedStep.id,
+                stepOrder: selectedStep.stepOrder,
+                variantGroup: selectedStep.variantGroup ?? '',
+                variantWeight: selectedStep.variantWeight ?? 1.0,
+                impressions: selectedStep.impressions ?? 0,
+                opens: selectedStep.opens ?? 0,
+                replies: selectedStep.replies ?? 0,
+                clicks: selectedStep.clicks ?? 0,
+              },
+              lead.id,
+            );
+            await prisma.sequenceStep.update({
+              where: { id: selectedStep.id },
+              data: {
+                impressions: { increment: delta.impressionsIncrement },
+                opens: { increment: delta.opensIncrement },
+                replies: { increment: delta.repliesIncrement },
+                clicks: { increment: delta.clicksIncrement },
+              },
+            }).catch(() => {});
+          }
+
+          await handlePostSendFeedback(result, messageToSend.id, lead.id, channelId)
+            .catch(err => console.warn('[Dispatcher] Post-send feedback error:', err instanceof Error ? err.message : String(err)));
+
+          // S10: Branching
+          const lastMsg = await prisma.outreachMessage.findFirst({
+            where: { leadId: lead.id, status: { notIn: ['QUEUED', 'SCHEDULED'] } },
+            orderBy: { createdAt: 'desc' },
+            select: { status: true, sentAt: true, openedAt: true, clickedAt: true, repliedAt: true },
+          }).catch(() => null);
+
+          const branchResult = evaluateBranch({
+            lastMessage: lastMsg ?? null,
+            currentStep: {
+              branchOn: selectedStep.branchOn ?? 'NONE',
+              branchStepIndex: selectedStep.branchStepIndex ?? null,
+              stepOrder: selectedStep.stepOrder,
+              delayHours: selectedStep.delayHours ?? 24,
+            },
+          });
+
+          const nextStepIndex = branchResult ?? leadStepIndex + 1;
+          if (leadState) {
+            const totalSteps = sequence.steps.length;
+            const nextStatus = nextStepIndex >= totalSteps ? 'COMPLETED' : 'ACTIVE';
+            await prisma.leadSequenceState.update({
+              where: { id: leadState.id },
+              data: {
+                currentStepIndex: Math.min(nextStepIndex, totalSteps),
+                status: nextStatus,
+              },
+            }).catch(() => {});
+          }
+        } else {
+          errors++;
+
+          // S14: Backoff tracking
+          if (result.retryable) {
+            const delay = backoffTracker.recordFailure(backoffKey);
+            if (delay !== null) {
+              await scheduleWorker.enqueueScheduled(prisma, messageToSend.id, new Date(Date.now() + delay));
+            } else {
+              backoffTracker.markExhausted(backoffKey);
+              try {
+                await deadLetterJob(prisma as unknown as DLQStore, {
+                  sequenceId,
+                  jobData: { sequenceId },
+                  error: new Error(result.error ?? 'Dispatch failed after max retries'),
+                  attemptCount: 5,
+                  firstFailedAt: new Date(),
+                });
+              } catch (dlqErr) {
+                console.warn('[Dispatcher] DLQ write failed:', dlqErr instanceof Error ? dlqErr.message : String(dlqErr));
+              }
+            }
+          }
+          cadenceGov.releaseSendSlot(channelId);
+        }
+
+        if (result.success) {
+          cadenceGov.commitSendSlot(channelId);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await prisma.outreachMessage.update({
+          where: { id: messageToSend.id },
+          data: { status: 'FAILED', errorReason: msg },
+        }).catch(() => {});
+        errors++;
+        cadenceGov.releaseSendSlot(channelId);
+
+        // S14: Backoff for unexpected errors
+        const delay = backoffTracker.recordFailure(backoffKey);
+        if (delay !== null) {
+          await scheduleWorker.enqueueScheduled(prisma, messageToSend.id, new Date(Date.now() + delay)).catch(() => {});
+        } else {
+          backoffTracker.markExhausted(backoffKey);
+          try {
+            await deadLetterJob(prisma as unknown as DLQStore, {
+              sequenceId,
+              jobData: { sequenceId },
+              error: err instanceof Error ? err : new Error(msg),
+              attemptCount: 5,
+              firstFailedAt: new Date(),
+            });
+          } catch { /* DLQ write failed — log only */ }
+        }
+        continue;
+      }
+
+      // Human-like delay between sends
+      const delayMs = sampleHumanDelaySeconds(() => Math.random()) * 1_000;
+      const rateLimitWindowMs = profile?.rateLimitWindowMs ?? 3_000;
+      await sleep(Math.max(rateLimitWindowMs, delayMs));
     }
 
-    if (!slotResult.allowed) {
-      // Cadence exhausted — pause batch, return early
-      cadenceGov.releaseSendSlot(channelId);
-      return {
+    // Update sequence next run time
+    const activeLeads = sequence.leads.filter((l: any) => {
+      const ls = l.sequenceStates?.[0];
+      return !ls || ls.status === 'ACTIVE';
+    });
+
+    const nextRunAt = activeLeads.length > 0
+      ? new Date(Date.now() + 60_000)
+      : null;
+
+    if (nextRunAt) {
+      await prisma.outreachSequence.update({
+        where: { id: sequenceId },
+        data: { nextRunAt },
+      }).catch(() => {});
+    } else {
+      await prisma.outreachSequence.update({
+        where: { id: sequenceId },
+        data: { status: 'COMPLETED' },
+      }).catch(() => {});
+    }
+
+    console.log(
+      JSON.stringify({
+        msg: 'dispatcher_sequence_processed',
+        sequenceId,
         dispatched,
         errors,
         skipped,
-        nextRunAt: new Date(Date.now() + (slotResult.retryAfterMs ?? 60_000)).toISOString(),
-      };
-    }
-
-    // Find the QUEUED message for this lead/step (skip SCHEDULED messages)
-    const message = currentStep.messages.find(
-      (m: { leadId: string; status: string }) => m.leadId === lead.id && m.status === 'QUEUED',
+        nextRunAt: nextRunAt?.toISOString() ?? null,
+      }),
     );
-    if (!message) {
-      cadenceGov.releaseSendSlot(channelId);
-      continue;
-    }
 
-    // ── S9: Account Resolution ──
-    let resolved = await resolveAccount(channelId, prisma);
-    if (!resolved) {
-      resolved = {
-        id: 'default',
-        provider: channelId,
-        externalId: 'default',
-        dailyLimit: profile?.defaultDailyLimit ?? 100,
-        sentToday: 0,
-        quotaDate: new Date(),
-        pausedUntil: null,
-        sessionKey: null,
-        status: 'ACTIVE',
-      };
-    }
-
-    // ── S10: A/B Variant Selection ──
-    // Find all steps that are variants of this one (same variantGroup, sorted by stepOrder)
-    const variantGroup = currentStep.variantGroup;
-    let selectedStep = currentStep;
-
-    if (variantGroup) {
-      const variants: TestVariant[] = sequence.steps
-        .filter((s: any) => s.variantGroup === variantGroup && s.active)
-        .map((s: any) => ({
-          id: s.id,
-          stepOrder: s.stepOrder,
-          variantGroup: s.variantGroup ?? '',
-          variantWeight: s.variantWeight ?? 1.0,
-          impressions: s.impressions ?? 0,
-          opens: s.opens ?? 0,
-          replies: s.replies ?? 0,
-          clicks: s.clicks ?? 0,
-        }));
-
-      if (variants.length > 0) {
-        const chosen = selectVariant(variants, { leadId: lead.id });
-        selectedStep = sequence.steps.find((s: any) => s.id === chosen.id) ?? currentStep;
-
-        // Find the QUEUED message for the selected variant step
-        const variantMessage = selectedStep.messages?.find(
-          (m: { leadId: string; status: string }) => m.leadId === lead.id && m.status === 'QUEUED',
-        );
-        if (!variantMessage) {
-          cadenceGov.releaseSendSlot(channelId);
-          continue;
-        }
-        // Use the variant message instead
-        // Actually, we need to use the original message from the selectedStep
-        // Since the message is linked to a specific stepId, we use the variant step's message
-        const msgForStep = selectedStep.messages?.find(
-          (m: { leadId: string; status: string }) => m.leadId === lead.id && m.status === 'QUEUED',
-        );
-        if (msgForStep) {
-          // message = msgForStep — handled inline below
-        }
-      }
-    }
-
-    const messageToSend = selectedStep !== currentStep
-      ? selectedStep.messages?.find((m: { leadId: string; status: string }) => m.leadId === lead.id && m.status === 'QUEUED')
-      : message;
-
-    if (!messageToSend) {
-      cadenceGov.releaseSendSlot(channelId);
-      continue;
-    }
-
-    const capability = selectedStep.channel === 'LINKEDIN_CONNECT' ? 'connect' as const : 'sendMessage' as const;
-
-    // Apply anti-ban policy
-    const antiBan = applyAntiBanPolicy({
-      channel: channelId,
-      sentToday: resolved.sentToday,
-      dailyLimit: resolved.dailyLimit,
-      pausedUntil: resolved.pausedUntil instanceof Date ? resolved.pausedUntil : resolved.pausedUntil ? new Date(resolved.pausedUntil) : null,
-    });
-
-    if (!antiBan.allowed) {
-      if (antiBan.pausedUntil && resolved.id !== 'default') {
-        await markAccountPaused(resolved.id, antiBan.pausedUntil, prisma);
-      }
-      const altAccount = resolved.id !== 'default'
-        ? await resolveAccount(channelId, prisma)
-        : null;
-      if (!altAccount) {
-        await prisma.outreachSequence.update({
-          where: { id: sequenceId },
-          data: { pausedUntil: antiBan.pausedUntil },
-        });
-        cadenceGov.releaseSendSlot(channelId);
-        return { dispatched, errors, skipped, nextRunAt: antiBan.pausedUntil?.toISOString() ?? null };
-      }
-      cadenceGov.releaseSendSlot(channelId);
-      continue;
-    }
-
-    // Build execution context
-    const context: ExecutionContext = {
-      lead: {
-        id: lead.id,
-        firstName: lead.firstName,
-        lastName: lead.lastName,
-        fullName: lead.fullName,
-        title: lead.title,
-        linkedinUrl: lead.linkedinUrl,
-        email: lead.email,
-        phone: lead.phone,
-        phoneStatus: lead.phoneStatus,
-      },
-      company: {
-        id: lead.company.id,
-        name: lead.company.name,
-        domain: lead.company.domain,
-        linkedinUrl: lead.company.linkedinUrl,
-      },
-      account: {
-        id: resolved.id,
-        provider: resolved.provider,
-        externalId: resolved.externalId,
-        dailyLimit: resolved.dailyLimit,
-        sentToday: resolved.sentToday,
-        pausedUntil: resolved.pausedUntil instanceof Date ? resolved.pausedUntil : resolved.pausedUntil ? new Date(resolved.pausedUntil) : null,
-        sessionKey: resolved.sessionKey,
-      },
-      message: {
-        id: messageToSend.id,
-        subject: messageToSend.subject,
-        body: messageToSend.body,
-        outreachAccountId: resolved.id,
-      },
-      dryRun: false,
-    };
-
-    const action: RecommendedAction = {
-      channel: channelId,
-      capability,
-      timing: 'WITHIN_24H',
-      template: messageToSend.body,
-      rationale: `Sequence ${sequenceId} step ${selectedStep.stepOrder} for ${lead.firstName}`,
-    };
-
-    try {
-      let result = await router.execute(action, context);
-
-      // S9: Failover on permanent account failure
-      if (!result.success && !result.retryable && resolved.id !== 'default') {
-        const errorMsg = (result.error ?? '').toUpperCase();
-        const isSessionExpired = errorMsg.includes('SESSION_EXPIRED') || errorMsg.includes('401');
-        const isBlocked = errorMsg.includes('403') || errorMsg.includes('FORBIDDEN') || errorMsg.includes('CAPTCHA');
-
-        if (isSessionExpired) {
-          await markAccountExpired(resolved.id, result.error ?? 'Session expired', prisma);
-        } else if (isBlocked) {
-          await markAccountBlocked(resolved.id, result.error ?? 'Account blocked', prisma);
-        }
-
-        const nextAccount = await resolveAccount(channelId, prisma);
-        if (nextAccount) {
-          console.log(`[Dispatcher] Failover: account ${resolved.id} blocked, retrying with ${nextAccount.id}`);
-          const retryContext: ExecutionContext = {
-            ...context,
-            account: {
-              id: nextAccount.id,
-              provider: nextAccount.provider,
-              externalId: nextAccount.externalId,
-              dailyLimit: nextAccount.dailyLimit,
-              sentToday: nextAccount.sentToday,
-              pausedUntil: nextAccount.pausedUntil instanceof Date ? nextAccount.pausedUntil : nextAccount.pausedUntil ? new Date(nextAccount.pausedUntil) : null,
-              sessionKey: nextAccount.sessionKey,
-            },
-            message: {
-              ...context.message,
-              outreachAccountId: nextAccount.id,
-            },
-          };
-          result = await router.execute(action, retryContext);
-        }
-      }
-
-      // Persist result
-      await handleExecutionResult(prisma, messageToSend.id, result, sequenceId, resolved.id);
-
-      if (result.success) {
-        dispatched++;
-
-        // Record on account
-        if (context.message.outreachAccountId && context.message.outreachAccountId !== 'default') {
-          await recordSent(context.message.outreachAccountId, prisma);
-        }
-
-        // ── S10: Record A/B impression ──
-        if (variantGroup) {
-          const delta = buildImpressionDelta(
-            {
-              id: selectedStep.id,
-              stepOrder: selectedStep.stepOrder,
-              variantGroup: selectedStep.variantGroup ?? '',
-              variantWeight: selectedStep.variantWeight ?? 1.0,
-              impressions: selectedStep.impressions ?? 0,
-              opens: selectedStep.opens ?? 0,
-              replies: selectedStep.replies ?? 0,
-              clicks: selectedStep.clicks ?? 0,
-            },
-            lead.id,
-          );
-          await prisma.sequenceStep.update({
-            where: { id: selectedStep.id },
-            data: {
-              impressions: { increment: delta.impressionsIncrement },
-              opens: { increment: delta.opensIncrement },
-              replies: { increment: delta.repliesIncrement },
-              clicks: { increment: delta.clicksIncrement },
-            },
-          }).catch(() => {});
-        }
-
-        // Schedule delivery verification
-        await handlePostSendFeedback(result, messageToSend.id, lead.id, channelId)
-          .catch(err => console.warn('[Dispatcher] Post-send feedback error:', err instanceof Error ? err.message : String(err)));
-
-        // ── S10: Evaluate branching for next step ──
-        const lastMsg = await prisma.outreachMessage.findFirst({
-          where: { leadId: lead.id, status: { notIn: ['QUEUED', 'SCHEDULED'] } },
-          orderBy: { createdAt: 'desc' },
-          select: { status: true, sentAt: true, openedAt: true, clickedAt: true, repliedAt: true },
-        }).catch(() => null);
-
-        const branchResult = evaluateBranch({
-          lastMessage: lastMsg ?? null,
-          currentStep: {
-            branchOn: selectedStep.branchOn ?? 'NONE',
-            branchStepIndex: selectedStep.branchStepIndex ?? null,
-            stepOrder: selectedStep.stepOrder,
-            delayHours: selectedStep.delayHours ?? 24,
-          },
-        });
-
-        const nextStepIndex = branchResult ?? leadStepIndex + 1;
-
-        // Advance per-lead state
-        if (leadState) {
-          const totalSteps = sequence.steps.length;
-          const nextStatus = nextStepIndex >= totalSteps ? 'COMPLETED' : 'ACTIVE';
-          await prisma.leadSequenceState.update({
-            where: { id: leadState.id },
-            data: {
-              currentStepIndex: Math.min(nextStepIndex, totalSteps),
-              status: nextStatus,
-            },
-          }).catch(() => {});
-        }
-      } else {
-        errors++;
-        // Sten retryable errors (re-queue), retryable keep as QUEUED
-        cadenceGov.releaseSendSlot(channelId);
-      }
-
-      // Commit the cadence slot on success
-      if (result.success) {
-        cadenceGov.commitSendSlot(channelId);
-      }
-
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await prisma.outreachMessage.update({
-        where: { id: messageToSend.id },
-        data: { status: 'FAILED', errorReason: msg },
-      }).catch(() => {});
-      errors++;
-      cadenceGov.releaseSendSlot(channelId);
-      continue;
-    }
-
-    // Human-like delay between sends
-    const delayMs = sampleHumanDelaySeconds(() => Math.random()) * 1_000;
-    const rateLimitWindowMs = profile?.rateLimitWindowMs ?? 3_000;
-    await sleep(Math.max(rateLimitWindowMs, delayMs));
+    return { dispatched, errors, skipped, nextRunAt: nextRunAt?.toISOString() ?? null };
+  } finally {
+    memLock.release(seqLockKey);
   }
-
-  // ── Update sequence-level next run time ──
-  // Use the shortest delay among remaining active steps
-  const activeLeads = sequence.leads.filter((l: any) => {
-    const ls = l.sequenceStates?.[0];
-    return !ls || ls.status === 'ACTIVE';
-  });
-
-  const nextRunAt = activeLeads.length > 0
-    ? new Date(Date.now() + 60_000) // Check again in 1 minute for per-lead based dispatch
-    : null;
-
-  if (nextRunAt) {
-    await prisma.outreachSequence.update({
-      where: { id: sequenceId },
-      data: { nextRunAt },
-    }).catch(() => {});
-  } else {
-    // All leads completed — mark sequence as completed
-    await prisma.outreachSequence.update({
-      where: { id: sequenceId },
-      data: { status: 'COMPLETED' },
-    }).catch(() => {});
-  }
-
-  console.log(
-    JSON.stringify({
-      msg: 'dispatcher_sequence_processed',
-      sequenceId,
-      dispatched,
-      errors,
-      skipped,
-      nextRunAt: nextRunAt?.toISOString() ?? null,
-    }),
-  );
-
-  return { dispatched, errors, skipped, nextRunAt: nextRunAt?.toISOString() ?? null };
 }
 
 async function handleExecutionResult(
@@ -673,7 +726,6 @@ async function handleExecutionResult(
     });
   }
 
-  // S9: Rate limit pauses the ACCOUNT, not the sequence
   if (result.rateLimitHit && result.channelPausedUntil && accountId !== 'default') {
     await markAccountPaused(accountId, result.channelPausedUntil, prisma);
   }

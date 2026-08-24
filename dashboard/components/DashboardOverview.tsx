@@ -2,11 +2,14 @@
 
 import Link from 'next/link';
 import { Activity, ArrowUpRight, CheckCircle2, Clock3, Mail, MousePointer2, Reply, Send, ShieldAlert, Users, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import type { Campaign, CampaignAnalytics } from '@/lib/types';
+import type { Campaign, CampaignAnalytics, FilterState, SyncHealth } from '@/lib/types';
 import { StatCard } from '@/components/StatCard';
 import { Badge } from '@/components/ui/badge';
+import { FilterBar } from '@/components/FilterBar';
+import { AutoRefresh, useAutoRefresh } from '@/components/AutoRefresh';
+import { SyncStatusBar } from '@/components/SyncStatusBar';
 
 interface CampaignWithAnalytics extends Campaign {
   analytics: CampaignAnalytics;
@@ -26,32 +29,59 @@ function conversionRate(analytics: CampaignAnalytics, key: 'delivered' | 'opened
   return analytics.sent > 0 ? (analytics[key] / analytics.sent) * 100 : 0;
 }
 
+const DEFAULT_FILTERS: FilterState = { channel: '', status: '', variant: '', periodStart: '', periodEnd: '' };
+
+function buildFilterParams(filters: FilterState): string {
+  const params = new URLSearchParams();
+  if (filters.channel) params.set('channel', filters.channel);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.periodStart) params.set('period_start', filters.periodStart);
+  if (filters.periodEnd) params.set('period_end', filters.periodEnd);
+  return params.toString();
+}
+
 export function DashboardOverview() {
   const [campaigns, setCampaigns] = useState<CampaignWithAnalytics[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [syncHealth, setSyncHealth] = useState<SyncHealth | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const campaignList = await apiFetch<Campaign[]>('/api/v1/campaigns');
+      const filterQs = buildFilterParams(filters);
+      const withAnalytics = await Promise.all(
+        campaignList.map(async campaign => ({
+          ...campaign,
+          analytics: await apiFetch<CampaignAnalytics>(
+            `/api/v1/campaigns/${campaign.id}/analytics${filterQs ? `?${filterQs}` : ''}`,
+          ),
+        })),
+      );
+      setCampaigns(withAnalytics);
+      setError(null);
+
+      // S13: Fetch sync health in parallel
+      try {
+        const health = await apiFetch<SyncHealth>('/api/v1/health/sync');
+        setSyncHealth(health);
+      } catch {
+        setSyncHealth(null);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to load campaigns');
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
 
   useEffect(() => {
-    let active = true;
-    async function load() {
-      try {
-        const campaignList = await apiFetch<Campaign[]>('/api/v1/campaigns');
-        const withAnalytics = await Promise.all(
-          campaignList.map(async campaign => ({
-            ...campaign,
-            analytics: await apiFetch<CampaignAnalytics>(`/api/v1/campaigns/${campaign.id}/analytics`),
-          })),
-        );
-        if (active) setCampaigns(withAnalytics);
-      } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : 'Unable to load campaigns');
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
+    setLoading(true);
     void load();
-    return () => { active = false; };
-  }, []);
+  }, [load]);
+
+  const refresh = useAutoRefresh(load, { enabled: false });
 
   return (
     <div className="space-y-8">
@@ -60,8 +90,31 @@ export function DashboardOverview() {
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-mint">Campaign operations</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-normal text-ink sm:text-4xl">Overview</h1>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted"><Activity size={15} className="text-mint" aria-hidden="true" /> Live API data</div>
+        <div className="flex items-center gap-3">
+          <AutoRefresh
+            autoEnabled={refresh.autoEnabled}
+            refreshing={refresh.refreshing}
+            intervalMs={refresh.intervalMs}
+            minIntervalMs={refresh.minIntervalMs}
+            maxIntervalMs={refresh.maxIntervalMs}
+            onToggle={refresh.setAutoEnabled}
+            onIntervalChange={refresh.setInterval}
+            onManualRefresh={() => void refresh.doRefresh()}
+          />
+          <span className="flex items-center gap-1.5 text-xs text-muted">
+            <Activity size={15} className="text-mint" aria-hidden="true" /> Live
+          </span>
+        </div>
       </div>
+
+      <SyncStatusBar
+        syncHealth={syncHealth}
+        error={error}
+        isLoading={loading}
+        lastRefreshedAt={refresh.lastRefreshedAt}
+      />
+
+      <FilterBar filters={filters} onChange={setFilters} />
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading campaigns">
