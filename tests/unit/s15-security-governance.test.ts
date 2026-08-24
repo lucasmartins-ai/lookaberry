@@ -995,14 +995,8 @@ describe('S15 Campaign Isolation', () => {
 
 // ────────────────────────────────────────────────────────────────────────────
 // Dispatcher Integration — Suppression Check
+// (reuses imports already at top of file)
 // ────────────────────────────────────────────────────────────────────────────
-
-import {
-  isSuppressed,
-  addToSuppressionList,
-  shouldBlockLead,
-  type SuppressionStore,
-} from '../../src/core/security/suppression.js';
 
 describe('S15 Dispatcher Suppression Check', () => {
   function makeStore(): SuppressionStore & { _suppressions: Map<string, any> } {
