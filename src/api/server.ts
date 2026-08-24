@@ -9,6 +9,7 @@ import webhookAuth from '../api/plugins/webhookAuth.js';
 import idempotency from '../api/plugins/idempotency.js';
 import auditLog from '../api/plugins/auditLog.js';
 import structuredLogging from '../api/plugins/structuredLogging.js';
+import ipFilter from '../api/plugins/ipFilter.js';
 import { setupSwagger } from '../api/plugins/swagger.js';
 import { healthRoutes } from '../api/routes/health.js';
 import { icpRoutes } from '../api/routes/icp.js';
@@ -30,6 +31,9 @@ export async function buildServer(): Promise<FastifyInstance> {
   // S7: Security plugins — order matters
   // 0. Structured logging (request ID, correlation, duration)
   await app.register(structuredLogging);
+
+  // 0.5 IP filtering (allowlist/denylist — runs before auth)
+  await app.register(ipFilter);
 
   // 1. Security headers on every response
   await app.register(securityHeaders);

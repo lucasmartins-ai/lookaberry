@@ -77,6 +77,17 @@ const envSchema = z.object({
 
   // S15: Security & Governance
   ANONYMIZATION_SALT: z.string().default('lookaberry-anonymization-v1'),
+
+  // S15: IP Filtering
+  // Comma-separated list of trusted IPs / CIDR ranges. When set, ONLY these IPs
+  // can reach non-exempt routes (allowlist mode).
+  IP_ALLOWLIST: z.string().default(''),
+  // Comma-separated list of IPs / CIDR ranges to block. These IPs are rejected
+  // even if they would otherwise pass auth.
+  IP_DENYLIST: z.string().default(''),
+  // If set, only these IPs can access admin routes (/api/v1/admin/*).
+  // Falls back to IP_ALLOWLIST if empty.
+  ADMIN_IP_ALLOWLIST: z.string().default(''),
 });
 
 export const config = envSchema.parse(process.env);
