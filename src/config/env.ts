@@ -78,3 +78,22 @@ const envSchema = z.object({
 
 export const config = envSchema.parse(process.env);
 export type Config = z.infer<typeof envSchema>;
+
+/**
+ * S12: Fail-fast production safety checks.
+ * In production, the API must not start with empty webhook secrets or
+ * an empty API key list — that would leave the service wide open.
+ */
+export function assertProductionSafety(): void {
+  if (config.NODE_ENV !== 'production') return;
+
+  const missing: string[] = [];
+  if (!config.API_KEYS.trim()) missing.push('API_KEYS');
+  if (!config.WEBHOOK_SECRET.trim()) missing.push('WEBHOOK_SECRET');
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Production safety check failed — missing required env vars: ${missing.join(', ')}`,
+    );
+  }
+}

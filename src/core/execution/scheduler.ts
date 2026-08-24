@@ -1,4 +1,5 @@
 import { outreachQueue } from '../queues/queue.js';
+import { enqueueIdempotent } from '../queues/helpers.js';
 import { prisma } from '../../db/client.js';
 
 export interface SequenceSchedulerOptions {
@@ -82,19 +83,26 @@ export class SequenceScheduler {
     let enqueued = 0;
 
     for (const seq of sequences) {
-      try {
-        await Promise.race([
-          outreachQueue.add('dispatch', { sequenceId: seq.id }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Queue add timed out')), 3000),
-          ),
-        ]);
+      // Deterministic job ID prevents duplicate dispatch jobs when a Redis blip
+      // causes a previous add to be retried on the next tick.
+      const jobId = `dispatch-${seq.id}`;
+      const result = await enqueueIdempotent(
+        outreachQueue,
+        'dispatch',
+        { sequenceId: seq.id },
+        jobId,
+      );
+
+      if (result.enqueued) {
         enqueued++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Graceful degradation: if Redis is down, log and skip
-        console.warn(`[SequenceScheduler] Could not enqueue sequence ${seq.id}: ${msg}`);
+      } else if (result.error) {
+        // Redis unreachable — do NOT advance nextRunAt; the sequence stays due
+        // and is retried on the next tick. This avoids silent job loss.
+        console.warn(
+          `[SequenceScheduler] Could not enqueue sequence ${seq.id}: ${result.error}`,
+        );
       }
+      // result.enqueued === false without error → already enqueued (dedupe), skip
     }
 
     return enqueued;

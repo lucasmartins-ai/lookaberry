@@ -1,5 +1,5 @@
 import { buildServer } from './api/server.js';
-import { config } from './config/env.js';
+import { config, assertProductionSafety } from './config/env.js';
 import { initVectorExtension } from './db/pgvector.js';
 import { createIcpWorker } from './core/queues/workers/icpWorker.js';
 import { createEnrichmentWorker } from './core/queues/workers/enrichmentWorker.js';
@@ -13,6 +13,9 @@ async function bootstrap() {
   console.log('🚀 Initializing LookaBerry GTM Outbound Engine...');
 
   try {
+    // S12: Fail fast if production safety requirements aren't met
+    assertProductionSafety();
+
     // 1. Initialize PostgreSQL vector extension and HNSW indexes
     console.log('📦 Ensuring pgvector extensions & HNSW indexes...');
     await initVectorExtension();

@@ -41,7 +41,7 @@ export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrack
   const markEngagement = opts.markEngagement ?? ((messageId: string, interactionType: MessageEngagementType) => markMessageEngagement(messageId, interactionType));
 
   /** Record an OPEN/CLICK event. Never throws — tracking must not break the pixel/redirect. */
-  async function record(messageId: string, interactionType: 'OPEN' | 'CLICK'): Promise<void> {
+  async function record(messageId: string, interactionType: 'OPEN' | 'CLICK', correlationId?: string): Promise<void> {
     try {
       const msg = await findMessage(messageId);
       if (!msg) return;
@@ -57,9 +57,15 @@ export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrack
       for (const result of results) {
         if (result.status === 'rejected') throw result.reason;
       }
+      app.log.info({
+        msg: 'email_tracking_recorded',
+        interactionType,
+        messageId,
+        correlationId,
+      });
     } catch (err) {
       app.log.warn(
-        { err: err instanceof Error ? err.message : String(err) },
+        { err: err instanceof Error ? err.message : String(err), correlationId },
         `email_tracking_${interactionType.toLowerCase()}_failed`,
       );
     }
@@ -71,7 +77,7 @@ export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrack
     const { messageId } = request.params as { messageId: string };
     reply.header('Cache-Control', NO_CACHE_HEADERS);
     reply.header('Content-Type', 'image/gif');
-    await record(messageId, 'OPEN');
+    await record(messageId, 'OPEN', request.correlationId ?? request.id);
     return reply.status(200).send(TRANSPARENT_GIF);
   });
 
@@ -90,7 +96,7 @@ export async function emailTrackingRoutes(app: FastifyInstance, opts: EmailTrack
       return reply.status(400).send({ error: 'Invalid URL' });
     }
 
-    await record(messageId, 'CLICK');
+    await record(messageId, 'CLICK', request.correlationId ?? request.id);
     return reply.status(302).redirect(url);
   });
 }

@@ -16,8 +16,11 @@ CREATE TABLE IF NOT EXISTS outreach_sequences (
 
 ALTER TABLE sequence_steps ADD COLUMN IF NOT EXISTS sequence_id UUID;
 
-ALTER TABLE sequence_steps ADD CONSTRAINT sequence_steps_sequence_id_fkey
-  FOREIGN KEY (sequence_id) REFERENCES outreach_sequences(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE sequence_steps ADD CONSTRAINT sequence_steps_sequence_id_fkey
+    FOREIGN KEY (sequence_id) REFERENCES outreach_sequences(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS outreach_accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -36,9 +39,15 @@ CREATE TABLE IF NOT EXISTS outreach_accounts (
 
 CREATE TABLE IF NOT EXISTS "_LeadToOutreachSequence" (
   "A" UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-  "B" UUID NOT NULL REFERENCES outreach_sequences(id) ON DELETE CASCADE,
-  CONSTRAINT "_LeadToOutreachSequence_AB_pkey" PRIMARY KEY ("A", "B")
+  "B" UUID NOT NULL REFERENCES outreach_sequences(id) ON DELETE CASCADE
 );
+
+-- Add PK constraint only if table was just created (won't have the constraint yet)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '_LeadToOutreachSequence_AB_pkey') THEN
+    ALTER TABLE "_LeadToOutreachSequence" ADD CONSTRAINT "_LeadToOutreachSequence_AB_pkey" PRIMARY KEY ("A", "B");
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_outreach_sequences_due ON outreach_sequences(status, next_run_at);
 CREATE INDEX IF NOT EXISTS "_LeadToOutreachSequence_B_index" ON "_LeadToOutreachSequence"("B");

@@ -1,5 +1,140 @@
 -- S10: Campaign Engine & Smart Scheduling
 -- Additive migration — does not break S1-S9
+-- This migration is self-contained for databases created from the original schema.
+
+-- The evidence graph migration may be absent from an existing database that was
+-- provisioned before S1 was recorded in Prisma's migration history.
+CREATE TABLE IF NOT EXISTS "sources" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "name" VARCHAR(255) NOT NULL,
+  "source_type" VARCHAR(100) NOT NULL,
+  "source_url" VARCHAR(1000),
+  "external_id" VARCHAR(255),
+  "metadata" JSONB NOT NULL DEFAULT '{}',
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "sources_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "people" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "company_id" UUID,
+  "first_name" VARCHAR(150),
+  "last_name" VARCHAR(150),
+  "full_name" VARCHAR(300) NOT NULL,
+  "title" VARCHAR(255),
+  "seniority" VARCHAR(100),
+  "linkedin_url" VARCHAR(500),
+  "email" VARCHAR(255),
+  "phone" VARCHAR(50),
+  "location" VARCHAR(255),
+  "metadata" JSONB NOT NULL DEFAULT '{}',
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "people_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "identities" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "person_id" UUID,
+  "company_id" UUID,
+  "source_id" UUID,
+  "identity_type" VARCHAR(100) NOT NULL,
+  "value" VARCHAR(500) NOT NULL,
+  "normalized_value" VARCHAR(500) NOT NULL,
+  "is_primary" BOOLEAN NOT NULL DEFAULT false,
+  "verified_at" TIMESTAMPTZ(6),
+  "confidence" DECIMAL(5,4) NOT NULL DEFAULT 1.0000,
+  "metadata" JSONB NOT NULL DEFAULT '{}',
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "identities_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "uq_identities_type_normalized_value" UNIQUE ("identity_type", "normalized_value")
+);
+
+CREATE TABLE IF NOT EXISTS "company_evidence" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "company_id" UUID NOT NULL,
+  "source_id" UUID NOT NULL,
+  "evidence_type" VARCHAR(100) NOT NULL,
+  "classification" VARCHAR(50) NOT NULL,
+  "source_url" VARCHAR(1000),
+  "observed_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "expires_at" TIMESTAMPTZ(6),
+  "confidence" DECIMAL(5,4) NOT NULL DEFAULT 1.0000,
+  "normalized_data" JSONB NOT NULL DEFAULT '{}',
+  "raw_data" JSONB,
+  "content_hash" VARCHAR(128),
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "company_evidence_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "person_evidence" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "person_id" UUID NOT NULL,
+  "source_id" UUID NOT NULL,
+  "evidence_type" VARCHAR(100) NOT NULL,
+  "classification" VARCHAR(50) NOT NULL,
+  "source_url" VARCHAR(1000),
+  "observed_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "expires_at" TIMESTAMPTZ(6),
+  "confidence" DECIMAL(5,4) NOT NULL DEFAULT 1.0000,
+  "normalized_data" JSONB NOT NULL DEFAULT '{}',
+  "raw_data" JSONB,
+  "content_hash" VARCHAR(128),
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "person_evidence_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "observations" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "source_id" UUID NOT NULL,
+  "company_id" UUID,
+  "person_id" UUID,
+  "observation_type" VARCHAR(100) NOT NULL,
+  "observed_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "expires_at" TIMESTAMPTZ(6),
+  "confidence" DECIMAL(5,4) NOT NULL DEFAULT 1.0000,
+  "normalized_data" JSONB NOT NULL DEFAULT '{}',
+  "raw_data" JSONB,
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "observations_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "observations_target_check" CHECK ("company_id" IS NOT NULL OR "person_id" IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS "relationships" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "company_id" UUID NOT NULL,
+  "person_id" UUID NOT NULL,
+  "source_id" UUID,
+  "relationship_type" VARCHAR(100) NOT NULL,
+  "confidence" DECIMAL(5,4) NOT NULL DEFAULT 1.0000,
+  "started_at" TIMESTAMPTZ(6),
+  "ended_at" TIMESTAMPTZ(6),
+  "metadata" JSONB NOT NULL DEFAULT '{}',
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "relationships_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "uq_relationships_company_person_type" UNIQUE ("company_id", "person_id", "relationship_type")
+);
+
+CREATE TABLE IF NOT EXISTS "interactions" (
+  "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+  "lead_id" UUID,
+  "company_id" UUID,
+  "person_id" UUID,
+  "source_id" UUID,
+  "channel" VARCHAR(100) NOT NULL,
+  "interaction_type" VARCHAR(100) NOT NULL,
+  "external_id" VARCHAR(255),
+  "occurred_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "content" TEXT,
+  "metadata" JSONB NOT NULL DEFAULT '{}',
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "interactions_pkey" PRIMARY KEY ("id")
+);
 
 -- 1. Add SCHEDULED to message_status_enum
 ALTER TYPE message_status_enum ADD VALUE IF NOT EXISTS 'SCHEDULED';

@@ -1,6 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Redis } from 'ioredis';
+import { registerRedisRecovery } from '../../core/queues/helpers.js';
 
 let _redisConnection: Redis | null = null;
 
@@ -137,6 +138,19 @@ async function storeResult(
     memoryCache.set(idempotencyKey, result);
   }
 }
+
+// Register Redis recovery: once Redis is back, resume distributed idempotency
+// instead of the per-process in-memory fallback.
+registerRedisRecovery(
+  'idempotency',
+  10_000,
+  () => !redisAvailable,
+  () => {
+    redisAvailable = true;
+    redisDownLogged = false;
+    console.warn('[idempotency] Redis recovered — resuming distributed idempotency');
+  },
+);
 
 export default fp(
   async function idempotency(app: FastifyInstance) {

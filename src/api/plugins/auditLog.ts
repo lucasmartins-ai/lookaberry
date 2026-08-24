@@ -3,14 +3,17 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { extractApiKey, fingerprint } from './auth.js';
 
 const EXEMPT_ROUTES = new Set(['/health']);
+const EXEMPT_PREFIXES = ['/health/'];
 
 export default fp(
   async function auditLog(app: FastifyInstance) {
     app.addHook('onResponse', async (request: FastifyRequest, reply) => {
       const url = request.url;
 
-      // Skip health check — too noisy
-      if (EXEMPT_ROUTES.has(url)) return;
+      // Skip health checks — too noisy
+      const path = url.split('?')[0];
+      if (EXEMPT_ROUTES.has(path)) return;
+      if (EXEMPT_PREFIXES.some((p) => path.startsWith(p))) return;
 
       // Only log authenticated routes (skip public docs endpoints)
       if (url === '/docs' || url.startsWith('/docs/')) return;
@@ -31,6 +34,7 @@ export default fp(
         latencyMs: Math.round(reply.elapsedTime),
         ip: request.ip,
         keyFingerprint,
+        correlationId: request.correlationId ?? undefined,
         ...(rateLimitRemaining !== undefined && {
           rateLimitRemaining: Number(rateLimitRemaining),
         }),

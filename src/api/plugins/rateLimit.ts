@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Redis } from 'ioredis';
 import { config } from '../../config/env.js';
 import { extractApiKey } from './auth.js';
+import { registerRedisRecovery } from '../../core/queues/helpers.js';
 
 let _redisConnection: Redis | null = null;
 
@@ -15,9 +16,9 @@ async function getRedis(): Promise<Redis> {
 }
 
 const WINDOW_SECONDS = 60;
-const EXEMPT_ROUTES = new Set(['/health', '/api/v1/webhooks/whatsapp']);
-// Tracking pixels are pre-fetched by mail clients (hundreds in parallel) — never rate limit them
-const EXEMPT_PREFIXES = ['/api/v1/email/track'];
+const EXEMPT_ROUTES = new Set(['/health']);
+// Health sub-checks (/health/db, /health/redis, ...) are also exempt
+const EXEMPT_PREFIXES = ['/health', '/api/v1/email/track'];
 
 function isExemptRoute(url: string): boolean {
   const path = url.split('?')[0];
@@ -55,7 +56,13 @@ function getElevatedKeys(): Set<string> {
 }
 
 function getTier(apiKey: string | null, url: string): { limit: number; keyPrefix: string } {
-  if (url.startsWith('/api/v1/webhooks/outreach') || url.startsWith('/api/v1/email/webhooks/resend')) {
+  // Inbound provider webhooks get their own (higher) tier: Meta/Resend/outreach
+  // send legitimate bursts that must not be throttled at the default tier.
+  if (
+    url.startsWith('/api/v1/webhooks/outreach') ||
+    url.startsWith('/api/v1/email/webhooks/resend') ||
+    url.startsWith('/api/v1/webhooks/whatsapp')
+  ) {
     return { limit: Number(process.env.RATE_LIMIT_WEBHOOK_RPM ?? config.RATE_LIMIT_WEBHOOK_RPM), keyPrefix: 'rl:webhook:' };
   }
 
@@ -173,6 +180,19 @@ function _resetMemoryStore() {
   redisAvailable = true;
   redisDownLogged = false;
 }
+
+// Register Redis recovery: once Redis is back, stop falling back to in-memory
+// and resume using the distributed sliding window.
+registerRedisRecovery(
+  'rate-limit',
+  10_000,
+  () => !redisAvailable,
+  () => {
+    redisAvailable = true;
+    redisDownLogged = false;
+    console.warn('[rateLimit] Redis recovered — resuming distributed rate limiting');
+  },
+);
 
 export { _resetMemoryStore };
 

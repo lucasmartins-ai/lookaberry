@@ -30,11 +30,15 @@ describe('Fastify REST API Integration', () => {
     const body = JSON.parse(response.body);
     // Accept 200 (all healthy) or 503 (degraded when DB/Redis unavailable)
     expect([200, 503]).toContain(response.statusCode);
-    expect(['healthy', 'degraded']).toContain(body.status);
-    expect(body.database).toBeDefined();
-    expect(body.redis).toBeDefined();
+    expect(['healthy', 'degraded', 'unhealthy']).toContain(body.status);
     expect(body.version).toBe('0.1.0');
     expect(body.timestamp).toBeDefined();
+    // S12: components breakdown replaces the old top-level database/redis fields
+    expect(body.components).toBeDefined();
+    expect(body.components.database).toBeDefined();
+    expect(body.components.redis).toBeDefined();
+    expect(body.components.pgvector).toBeDefined();
+    expect(body.components.queues).toBeDefined();
   });
 
   it('POST /api/v1/icp/analyze should create an ICP record and return structured personas', async () => {

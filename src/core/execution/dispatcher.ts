@@ -27,6 +27,8 @@ import type { TestVariant } from './abTesting.js';
 
 export interface DispatcherJobData {
   sequenceId: string;
+  /** Correlation ID propagated from the webhook/tracking that triggered dispatch */
+  correlationId?: string;
 }
 
 export interface DispatcherDependencies {
@@ -77,11 +79,28 @@ export function createDispatcherWorker(
   );
 
   worker.on('failed', (job, error) => {
-    console.error(`[Dispatcher Worker] Job ${job?.id} (sequence=${job?.data.sequenceId}) failed: ${error.message}`);
+    const correlationId = (job?.data as any)?.correlationId;
+    console.error(
+      JSON.stringify({
+        msg: 'dispatcher_job_failed',
+        jobId: job?.id,
+        sequenceId: job?.data.sequenceId,
+        error: error.message,
+        correlationId,
+      }),
+    );
   });
 
   worker.on('completed', job => {
-    console.log(`[Dispatcher Worker] Job ${job.id} (sequence=${job.data.sequenceId}) completed.`);
+    const correlationId = (job?.data as any)?.correlationId;
+    console.log(
+      JSON.stringify({
+        msg: 'dispatcher_job_completed',
+        jobId: job.id,
+        sequenceId: job.data.sequenceId,
+        correlationId,
+      }),
+    );
   });
 
   return worker;
@@ -602,7 +621,14 @@ async function processSequenceStep(
   }
 
   console.log(
-    `[Dispatcher] Sequence ${sequenceId}: dispatched=${dispatched}, errors=${errors}, skipped=${skipped}, nextRunAt=${nextRunAt?.toISOString() ?? 'N/A'}`,
+    JSON.stringify({
+      msg: 'dispatcher_sequence_processed',
+      sequenceId,
+      dispatched,
+      errors,
+      skipped,
+      nextRunAt: nextRunAt?.toISOString() ?? null,
+    }),
   );
 
   return { dispatched, errors, skipped, nextRunAt: nextRunAt?.toISOString() ?? null };

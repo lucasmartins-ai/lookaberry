@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { outreachQueue } from '../queues/queue.js';
+import { enqueueIdempotent } from '../queues/helpers.js';
 import {
   ScheduleOutreachSequenceInputSchema,
   type ScheduleOutreachSequenceInput,
@@ -225,15 +226,18 @@ export class OutreachService {
         status: 'ACTIVE',
       })),
     });
-    // Enqueue the first step in the BullMQ dispatcher queue
-    try {
-      await Promise.race([
-        outreachQueue.add('dispatch', { sequenceId: sequence.id }, { delay: 0 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Queue add timed out')), 3000)),
-      ]);
-    } catch (err) {
-      // Graceful degradation: if Redis is down, scheduling succeeds but dispatch is deferred
-      console.warn('[OutreachService] Could not enqueue dispatch job — Redis may be unavailable:', err instanceof Error ? err.message : String(err));
+    // Enqueue the first step in the BullMQ dispatcher queue.
+    // Deterministic job ID prevents duplicates; on Redis failure the sequence
+    // stays due and is retried by the SequenceScheduler (no silent loss).
+    const enqueueResult = await enqueueIdempotent(
+      outreachQueue,
+      'dispatch',
+      { sequenceId: sequence.id },
+      `dispatch-${sequence.id}`,
+      { delay: 0 },
+    );
+    if (!enqueueResult.enqueued && enqueueResult.error) {
+      console.warn('[OutreachService] Could not enqueue dispatch job — Redis may be unavailable:', enqueueResult.error);
     }
 
     return {

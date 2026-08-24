@@ -1,4 +1,5 @@
 import { outreachQueue } from '../queues/queue.js';
+import { enqueueIdempotent } from '../queues/helpers.js';
 import { prisma } from '../../db/client.js';
 import { executionRouter } from './index.js';
 import type { ExecutionResult } from './types.js';
@@ -70,24 +71,26 @@ export async function scheduleDeliveryVerification(
     // The delay is 24h (in ms)
     const delayMs = 24 * 60 * 60 * 1_000;
 
-    await Promise.race([
-      outreachQueue.add(
-        'verifyDelivery',
-        {
-          messageId,
-          leadId,
-          leadName: lead.fullName,
-          companyName: lead.company.name,
-          linkedinUrl: lead.linkedinUrl,
-        },
-        { delay: delayMs },
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Queue add timed out')), 3000),
-      ),
-    ]);
+    const result = await enqueueIdempotent(
+      outreachQueue,
+      'verifyDelivery',
+      {
+        messageId,
+        leadId,
+        leadName: lead.fullName,
+        companyName: lead.company.name,
+        linkedinUrl: lead.linkedinUrl,
+      },
+      `verifyDelivery-${messageId}`,
+      { delay: delayMs },
+    );
 
-    console.log(`[FeedbackLoop] Scheduled delivery verification for message ${messageId} in 24h`);
+    if (result.enqueued) {
+      console.log(`[FeedbackLoop] Scheduled delivery verification for message ${messageId} in 24h`);
+    } else if (result.error) {
+      console.warn(`[FeedbackLoop] Could not schedule delivery verification for message ${messageId}: ${result.error}`);
+    }
+    // enqueued === false without error → already scheduled (dedupe)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[FeedbackLoop] Could not schedule delivery verification for message ${messageId}: ${msg}`);

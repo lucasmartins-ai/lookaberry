@@ -8,6 +8,7 @@ import rateLimit from '../api/plugins/rateLimit.js';
 import webhookAuth from '../api/plugins/webhookAuth.js';
 import idempotency from '../api/plugins/idempotency.js';
 import auditLog from '../api/plugins/auditLog.js';
+import structuredLogging from '../api/plugins/structuredLogging.js';
 import { setupSwagger } from '../api/plugins/swagger.js';
 import { healthRoutes } from '../api/routes/health.js';
 import { icpRoutes } from '../api/routes/icp.js';
@@ -26,6 +27,9 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
 
   // S7: Security plugins — order matters
+  // 0. Structured logging (request ID, correlation, duration)
+  await app.register(structuredLogging);
+
   // 1. Security headers on every response
   await app.register(securityHeaders);
 
@@ -35,6 +39,16 @@ export async function buildServer(): Promise<FastifyInstance> {
   // 3. CORS hardening
   const corsOrigins = (process.env.CORS_ORIGINS ?? config.CORS_ORIGINS)
     .split(',').map((o) => o.trim()).filter(Boolean);
+
+  // Reject wildcard origin when credentials are enabled — browsers refuse this
+  // combination, and it silently disables CORS protection.
+  if (corsOrigins.includes('*')) {
+    throw new Error(
+      'CORS_ORIGINS must not contain "*" when credentials are enabled. ' +
+      'List explicit origins instead.',
+    );
+  }
+
   await app.register(cors, {
     origin: corsOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

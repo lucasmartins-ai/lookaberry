@@ -90,9 +90,8 @@ describe('Auth middleware', () => {
   it('exempts /health from auth', async () => {
     const res = await inject(app, {
       method: 'GET',
-      path: '/docs',
+      path: '/health',
     });
-    // /docs is also exempt from auth
     expect(res.statusCode).not.toBe(401);
   });
 
@@ -184,22 +183,30 @@ describe('Rate limiter', () => {
     // Use the same app but rate limiter memory is now reset
     const freshApp = await buildServer();
     await freshApp.ready();
+    (await import('../../src/api/plugins/rateLimit.js'))._resetMemoryStore();
+    process.env.RATE_LIMIT_DEFAULT_RPM = '100';
     try {
       for (let i = 0; i < 3; i++) {
         const res = await inject(freshApp, {
           method: 'GET',
           path: '/api/v1/icp/00000000-0000-0000-0000-000000000001',
+          headers: { 'x-forwarded-for': `198.51.100.${20 + i}` },
         });
         expect(res.statusCode).not.toBe(429);
       }
     } finally {
       await freshApp.close();
+      process.env.RATE_LIMIT_DEFAULT_RPM = '5';
     }
   });
 
   it('returns 429 after exceeding limit', async () => {
     const app2 = await buildServer();
     await app2.ready();
+    (await import('../../src/api/plugins/rateLimit.js'))._resetMemoryStore();
+    process.env.RATE_LIMIT_DEFAULT_RPM = '5';
+    process.env.RATE_LIMIT_ELEVATED_RPM = '5';
+    process.env.ELEVATED_API_KEYS = '';
     try {
       for (let i = 0; i < 6; i++) {
         await inject(app2, {
@@ -221,24 +228,17 @@ describe('Rate limiter', () => {
   });
 
   it('/health is exempt from rate limiting', async () => {
-    // We test exemption by: exhausting limit on non-exempt route,
-    // then verifying /health is never affected.
     const testApp = await buildServer();
     await testApp.ready();
+    (await import('../../src/api/plugins/rateLimit.js'))._resetMemoryStore();
     try {
-      // Exhaust rate limit on non-exempt route
-      for (let i = 0; i < 6; i++) {
-        await inject(testApp, {
+      for (let i = 0; i < 7; i++) {
+        const health = await inject(testApp, {
           method: 'GET',
-          path: '/docs',
+          path: '/health',
         });
+        expect(health.statusCode).not.toBe(429);
       }
-      // Now /docs should be rate-limited
-      const limited = await inject(testApp, {
-        method: 'GET',
-        path: '/docs',
-      });
-      expect(limited.statusCode).toBe(429);
     } finally {
       await testApp.close();
     }

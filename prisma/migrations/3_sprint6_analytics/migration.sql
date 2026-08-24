@@ -1,7 +1,13 @@
-CREATE TYPE "interaction_type_enum" AS ENUM ('OPEN', 'CLICK', 'REPLY', 'BOUNCE');
-CREATE TYPE "feedback_sentiment_enum" AS ENUM ('POSITIVE', 'NEGATIVE', 'NEUTRAL', 'AMBIGUOUS');
+DO $$ BEGIN
+  CREATE TYPE "interaction_type_enum" AS ENUM ('OPEN', 'CLICK', 'REPLY', 'BOUNCE');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE "feedback_sentiment_enum" AS ENUM ('POSITIVE', 'NEGATIVE', 'NEUTRAL', 'AMBIGUOUS');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TABLE "campaign_metrics" (
+CREATE TABLE IF NOT EXISTS "campaign_metrics" (
   "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
   "campaign_id" UUID NOT NULL,
   "metric_date" DATE NOT NULL,
@@ -17,9 +23,9 @@ CREATE TABLE "campaign_metrics" (
   CONSTRAINT "uq_campaign_metrics_campaign_date" UNIQUE ("campaign_id", "metric_date"),
   CONSTRAINT "campaign_metrics_campaign_id_fkey" FOREIGN KEY ("campaign_id") REFERENCES "campaigns"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
-CREATE INDEX "idx_campaign_metrics_campaign_date" ON "campaign_metrics"("campaign_id", "metric_date");
+CREATE INDEX IF NOT EXISTS "idx_campaign_metrics_campaign_date" ON "campaign_metrics"("campaign_id", "metric_date");
 
-CREATE TABLE "lead_interaction_feedback" (
+CREATE TABLE IF NOT EXISTS "lead_interaction_feedback" (
   "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
   "campaign_id" UUID NOT NULL,
   "lead_id" UUID NOT NULL,
@@ -36,5 +42,5 @@ CREATE TABLE "lead_interaction_feedback" (
   CONSTRAINT "lead_interaction_feedback_lead_id_fkey" FOREIGN KEY ("lead_id") REFERENCES "leads"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT "lead_interaction_feedback_message_id_fkey" FOREIGN KEY ("message_id") REFERENCES "outreach_messages"("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
-CREATE INDEX "idx_feedback_campaign_created" ON "lead_interaction_feedback"("campaign_id", "created_at");
-CREATE INDEX "idx_feedback_lead_created" ON "lead_interaction_feedback"("lead_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_feedback_campaign_created" ON "lead_interaction_feedback"("campaign_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_feedback_lead_created" ON "lead_interaction_feedback"("lead_id", "created_at");

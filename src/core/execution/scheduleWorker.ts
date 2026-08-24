@@ -1,4 +1,5 @@
 import { outreachQueue } from '../queues/queue.js';
+import { enqueueIdempotent } from '../queues/helpers.js';
 
 /**
  * S10: Schedule Worker
@@ -131,17 +132,18 @@ export class ScheduleWorker {
         });
 
         for (const seq of sequences) {
-          try {
-            await Promise.race([
-              outreachQueue.add('dispatch', { sequenceId: seq.id }),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Queue add timed out')), 3000),
-              ),
-            ]);
+          const result = await enqueueIdempotent(
+            outreachQueue,
+            'dispatch',
+            { sequenceId: seq.id },
+            `dispatch-${seq.id}`,
+          );
+          if (result.enqueued) {
             enqueued++;
-          } catch {
-            // Redis down — skip
+          } else if (result.error) {
+            console.warn(`[ScheduleWorker] Could not enqueue sequence ${seq.id}: ${result.error}`);
           }
+          // already enqueued (dedupe) → skip
         }
       } catch {
         // Skip campaign if sequence lookup fails
