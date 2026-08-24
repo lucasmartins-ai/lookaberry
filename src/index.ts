@@ -6,6 +6,7 @@ import { createEnrichmentWorker } from './core/queues/workers/enrichmentWorker.j
 import { createDispatcherWorker } from './core/execution/dispatcher.js';
 import { createInboxWorker } from './core/execution/inboxWorker.js';
 import { SequenceScheduler } from './core/execution/scheduler.js';
+import { RetentionScheduler } from './core/execution/retentionScheduler.js';
 import { closeQueues } from './core/queues/queue.js';
 import { prisma } from './db/client.js';
 
@@ -48,6 +49,12 @@ async function bootstrap() {
     scheduler.start();
     console.log('✅ Sequence Scheduler active (60s interval)');
 
+    // 3b. Start Retention Scheduler (periodic data anonymization)
+    console.log('🗄️  Starting Retention Scheduler...');
+    const retentionScheduler = new RetentionScheduler(3_600_000); // 1h default
+    retentionScheduler.start();
+    console.log('✅ Retention Scheduler active (1h interval)');
+
     // 4. Build & start Fastify API and MCP SSE server
     const app = await buildServer();
 
@@ -68,6 +75,7 @@ async function bootstrap() {
       console.log(`\n[LookaBerry] Received ${signal}. Shutting down gracefully...`);
       try {
         scheduler.stop();
+        retentionScheduler.stop();
         await app.close();
         await icpWorker.close();
         await enrichmentWorker.close();

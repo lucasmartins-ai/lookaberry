@@ -76,7 +76,7 @@ export const DEFAULT_RETENTION_POLICIES = {
  * Irreversibly hash PII field for aggregate metric preservation.
  * SHA-256 with deterministic keying so same input always produces same hash.
  */
-function anonymizeField(value: string): string {
+export function anonymizeField(value: string): string {
   const salt = process.env.ANONYMIZATION_SALT || 'lookaberry-anonymization-v1';
   return 'anon_' + crypto
     .createHash('sha256')
@@ -222,7 +222,7 @@ export async function scheduledAnonymization(
 
     for (const lead of outdatedLeads) {
       try {
-        await anonymizeLead(store, lead.id, 'system_retention_policy');
+        await anonymizeLead(store, lead.id); // actor=null (system action)
         result.anonymized++;
       } catch (err) {
         result.errors.push(`Failed to anonymize lead ${lead.id}: ${err instanceof Error ? err.message : String(err)}`);
