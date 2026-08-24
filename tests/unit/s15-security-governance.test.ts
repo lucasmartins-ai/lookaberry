@@ -986,11 +986,143 @@ describe('S15 Campaign Isolation', () => {
     });
 
     expect(canAccessCampaignRBAC(ctx, 'any-campaign')).toBe(false);
-  });
-
-  it('ADMIN bypasses all isolation', () => {
+  });  it('ADMIN bypasses all isolation', () => {
     const ctx = contextFromApiKey({ permission: 'ADMIN', campaignIds: [] });
     expect(canAccessCampaignRBAC(ctx, 'any-campaign')).toBe(true);
     expect(canAccessLead(ctx, 'any-campaign')).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Dispatcher Integration — Suppression Check
+// ────────────────────────────────────────────────────────────────────────────
+
+import {
+  isSuppressed,
+  addToSuppressionList,
+  shouldBlockLead,
+  type SuppressionStore,
+} from '../../src/core/security/suppression.js';
+
+describe('S15 Dispatcher Suppression Check', () => {
+  function makeStore(): SuppressionStore & { _suppressions: Map<string, any> } {
+    const suppressions = new Map<string, any>();
+    return {
+      _suppressions: suppressions,
+      globalSuppressionList: {
+        create: vi.fn(async (args: any) => {
+          const key = `${args.data.suppressionType}:${args.data.value}`;
+          if (suppressions.has(key)) throw new Error('Unique constraint');
+          suppressions.set(key, args.data);
+          return { id: `sup-${suppressions.size}`, ...args.data };
+        }),
+        findUnique: vi.fn(async (args: any) => {
+          const key = `${args.where.suppressionType_value.suppressionType}:${args.where.suppressionType_value.value}`;
+          return suppressions.get(key) ?? null;
+        }),
+        findMany: vi.fn(async () => Array.from(suppressions.values())),
+        delete: vi.fn(async (args: any) => {
+          for (const [key, val] of suppressions) {
+            if (val.id === args.where.id) { suppressions.delete(key); return { id: args.where.id }; }
+          }
+          throw new Error('Not found');
+        }),
+        count: vi.fn(async () => suppressions.size),
+      },
+      lead: {
+        update: vi.fn(async () => ({ id: 'lead-1' })),
+        findUnique: vi.fn(async () => null),
+      },
+      leadSequenceState: {
+        updateMany: vi.fn(async () => ({ count: 0 })),
+        findMany: vi.fn(async () => []),
+      },
+      outreachMessage: {
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      outreachSequence: {
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      auditLog: {
+        create: vi.fn(async () => ({ id: 'audit-1' })),
+      },
+    };
+  }
+
+  it('returns not blocked for clean lead (dispatcher path)', async () => {
+    const store = makeStore();
+    const result = await shouldBlockLead(store, {
+      id: 'lead-d1',
+      email: 'clean@foleon.com',
+      linkedinUrl: 'https://linkedin.com/in/cleanlead',
+      company: { domain: 'foleon.com' },
+    });
+    expect(result.blocked).toBe(false);
+  });
+
+  it('blocks lead suppressed by email', async () => {
+    const store = makeStore();
+    await addToSuppressionList(store, {
+      suppressionType: 'EMAIL' as any,
+      value: 'blocked@example.com',
+    });
+
+    const result = await shouldBlockLead(store, {
+      id: 'lead-d2',
+      email: 'blocked@example.com',
+      linkedinUrl: null,
+      company: { domain: null },
+    });
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toContain('suppression');
+  });
+
+  it('blocks lead suppressed by domain', async () => {
+    const store = makeStore();
+    await addToSuppressionList(store, {
+      suppressionType: 'DOMAIN' as any,
+      value: 'evilcorp.com',
+    });
+
+    // Email domain matches suppression
+    const result = await shouldBlockLead(store, {
+      id: 'lead-d3',
+      email: 'john@evilcorp.com',
+      linkedinUrl: null,
+      company: { domain: null },
+    });
+    expect(result.blocked).toBe(true);
+  });
+
+  it('blocks lead suppressed by LinkedIn URL', async () => {
+    const store = makeStore();
+    await addToSuppressionList(store, {
+      suppressionType: 'LINKEDIN_URL' as any,
+      value: 'https://linkedin.com/in/blockedperson',
+    });
+
+    const result = await shouldBlockLead(store, {
+      id: 'lead-d4',
+      email: null,
+      linkedinUrl: 'https://linkedin.com/in/blockedperson',
+      company: { domain: null },
+    });
+    expect(result.blocked).toBe(true);
+  });
+
+  it('blocks lead suppressed by company domain (via company object)', async () => {
+    const store = makeStore();
+    await addToSuppressionList(store, {
+      suppressionType: 'DOMAIN' as any,
+      value: 'spamcorp.com',
+    });
+
+    const result = await shouldBlockLead(store, {
+      id: 'lead-d5',
+      email: null,
+      linkedinUrl: null,
+      company: { domain: 'spamcorp.com' },
+    });
+    expect(result.blocked).toBe(true);
   });
 });

@@ -33,6 +33,7 @@ import {
 import { getBackoffTracker, remainingWaitMs } from './backoff.js';
 import { deadLetterJob, type DLQStore } from './dlq.js';
 import { getMemoryLock } from './locking.js';
+import { shouldBlockLead } from '../security/suppression.js';
 
 export interface DispatcherJobData {
   sequenceId: string;
@@ -304,6 +305,38 @@ async function processSequenceStep(
         phone: lead.phone,
         location: lead.location,
       };
+
+      // ── S15: Global Suppression Check ──
+      // Block the lead before any outbound action if their email, domain,
+      // or LinkedIn URL is in the global suppression list.
+      const suppressionCheck = await shouldBlockLead(
+        prisma as any,
+        {
+          id: lead.id,
+          email: lead.email,
+          linkedinUrl: lead.linkedinUrl,
+          company: { domain: lead.company?.domain },
+        },
+      );
+
+      if (suppressionCheck.blocked) {
+        console.log(
+          `[Dispatcher] Skipping lead ${lead.id}: ${suppressionCheck.reason}`,
+        );
+        // Mark all queued messages for this lead as FAILED with the suppression reason
+        await prisma.outreachMessage.updateMany({
+          where: {
+            leadId: lead.id,
+            status: { in: ['QUEUED', 'SCHEDULED'] },
+          },
+          data: {
+            status: 'FAILED',
+            errorReason: suppressionCheck.reason ?? 'Lead in global suppression list',
+          },
+        }).catch(() => {});
+        skipped++;
+        continue;
+      }
 
       if (!shouldSendNow(schedulableLead, channelId, scheduleCfg)) {
         const nextSlot = nextAvailableSlot(schedulableLead, channelId, scheduleCfg);
