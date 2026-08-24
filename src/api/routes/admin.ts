@@ -31,6 +31,12 @@ import {
   updateRetentionPolicy,
   listRetentionPolicies,
 } from '../../core/security/retention.js';
+import {
+  setupTotp,
+  confirmTotp,
+  disableTotp,
+  regenerateBackupCodes,
+} from '../../core/security/totp.js';
 
 // ──────────────────────────────── Helpers ────────────────────────────────
 
@@ -300,6 +306,114 @@ export async function adminRoutes(app: FastifyInstance) {
   // ────────────────────────────────────────────────────────────────────────
   // Audit Log
   // ────────────────────────────────────────────────────────────────────────
+
+  // ────────────────────────────────────────────────────────────────────────
+  // TOTP Two-Factor Authentication (S15)
+  // ────────────────────────────────────────────────────────────────────────
+
+  /** POST /api/v1/admin/totp/setup/:apiKeyId — Set up TOTP for a key */
+  app.post('/api/v1/admin/totp/setup/:apiKeyId', {
+    schema: { description: 'S15: Initiate TOTP setup for an API key. ADMIN only.', tags: ['Admin', 'S15'] },
+  }, async (request: any, reply: any) => {
+    if (!isAdmin(request.__apiKey)) {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Apenas administradores.' });
+    }
+    try {
+      const apiKeyId = (request.params as { apiKeyId: string }).apiKeyId;
+      const key = await db.apiKey.findUnique({ where: { id: apiKeyId } });
+      if (!key) return reply.status(404).send({ error: 'Chave não encontrada.' });
+
+      const result = await setupTotp(
+        { totpSecret: db.totpSecret, apiKey: db.apiKey },
+        apiKeyId,
+        key.name,
+      );
+
+      return {
+        message: 'Configuração TOTP iniciada. Escaneie o QR code e confirme com um código.',
+        otpauthUri: result.otpauthUri,
+        secretPreview: result.secretPreview,
+        backupCodes: result.backupCodes,
+      };
+    } catch (err: any) {
+      return reply.status(500).send({ error: 'Falha na configuração', message: err.message });
+    }
+  });
+
+  /** POST /api/v1/admin/totp/confirm/:apiKeyId — Confirm TOTP setup with a code */
+  app.post('/api/v1/admin/totp/confirm/:apiKeyId', {
+    schema: { description: 'S15: Confirm TOTP setup with authenticator code. ADMIN only.', tags: ['Admin', 'S15'] },
+  }, async (request: any, reply: any) => {
+    if (!isAdmin(request.__apiKey)) {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Apenas administradores.' });
+    }
+    const body = request.body as { code?: string };
+    if (!body?.code || !/^\d{6}$/.test(body.code)) {
+      return reply.status(400).send({ error: 'Validation failed', message: 'Forneça um código TOTP de 6 dígitos.' });
+    }
+    try {
+      const result = await confirmTotp(
+        { totpSecret: db.totpSecret, apiKey: db.apiKey },
+        (request.params as { apiKeyId: string }).apiKeyId,
+        body.code,
+      );
+      if (!result.confirmed) {
+        return reply.status(400).send({ error: 'Código inválido', message: 'O código TOTP não corresponde. Tente novamente.' });
+      }
+      return { message: 'TOTP ativado com sucesso. A chave agora requer 2FA para rotas admin.' };
+    } catch (err: any) {
+      return reply.status(500).send({ error: 'Falha na confirmação', message: err.message });
+    }
+  });
+
+  /** POST /api/v1/admin/totp/disable/:apiKeyId — Disable TOTP */
+  app.post('/api/v1/admin/totp/disable/:apiKeyId', {
+    schema: { description: 'S15: Disable TOTP for a key. ADMIN only.', tags: ['Admin', 'S15'] },
+  }, async (request: any, reply: any) => {
+    if (!isAdmin(request.__apiKey)) {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Apenas administradores.' });
+    }
+    const body = request.body as { code?: string };
+    try {
+      const result = await disableTotp(
+        { totpSecret: db.totpSecret, apiKey: db.apiKey },
+        (request.params as { apiKeyId: string }).apiKeyId,
+        body?.code,
+      );
+      if (!result.disabled) {
+        return reply.status(400).send({ error: 'Não foi possível desativar', message: result.reason });
+      }
+      return { message: 'TOTP desativado com sucesso.' };
+    } catch (err: any) {
+      return reply.status(500).send({ error: 'Falha ao desativar', message: err.message });
+    }
+  });
+
+  /** POST /api/v1/admin/totp/backup-codes/:apiKeyId — Regenerate backup codes */
+  app.post('/api/v1/admin/totp/backup-codes/:apiKeyId', {
+    schema: { description: 'S15: Regenerate TOTP backup codes. ADMIN only.', tags: ['Admin', 'S15'] },
+  }, async (request: any, reply: any) => {
+    if (!isAdmin(request.__apiKey)) {
+      return reply.status(403).send({ error: 'Forbidden', message: 'Apenas administradores.' });
+    }
+    const body = request.body as { totpCode?: string };
+    if (!body?.totpCode || !/^\d{6}$/.test(body.totpCode)) {
+      return reply.status(400).send({ error: 'Validation failed', message: 'Forneça um código TOTP de 6 dígitos para autorizar.' });
+    }
+    try {
+      const result = await regenerateBackupCodes(
+        { totpSecret: db.totpSecret, apiKey: db.apiKey },
+        (request.params as { apiKeyId: string }).apiKeyId,
+        body.totpCode,
+      );
+      if (!result.success) {
+        return reply.status(400).send({ error: result.reason, message: result.reason });
+      }
+      return { message: 'Novos códigos de backup gerados.', backupCodes: result.backupCodes };
+    } catch (err: any) {
+      return reply.status(500).send({ error: 'Falha ao gerar códigos', message: err.message });
+    }
+  });
 
   app.get('/api/v1/admin/audit', {
     schema: { description: 'S15: Query audit log entries. ADMIN and OPERATOR.', tags: ['Admin', 'S15'] },

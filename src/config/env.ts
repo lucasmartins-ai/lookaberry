@@ -77,6 +77,8 @@ const envSchema = z.object({
 
   // S15: Security & Governance
   ANONYMIZATION_SALT: z.string().default('lookaberry-anonymization-v1'),
+  TOTP_ISSUER: z.string().default('LookaBerry'),
+  TOTP_ENCRYPTION_KEY: z.string().default(''),
 
   // S15: IP Filtering
   // Comma-separated list of trusted IPs / CIDR ranges. When set, ONLY these IPs

@@ -3,11 +3,13 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config/env.js';
 import { prisma } from '../../db/client.js';
 import type { ApiKeyRecord } from '../../core/security/apiKeys.js';
+import { validateRequestTotp } from '../../core/security/totp.js';
 
 const EXEMPT_PREFIXES = ['/health', '/docs', '/api/v1/email/track'];
 const WEBHOOK_ROUTE = '/api/v1/webhooks/outreach';
 const EMAIL_WEBHOOK_ROUTE = '/api/v1/email/webhooks/resend';
 const WHATSAPP_WEBHOOK_ROUTE = '/api/v1/webhooks/whatsapp';
+const ADMIN_PREFIX = '/api/v1/admin';
 
 interface ApiKeyCacheEntry {
   key: string;
@@ -74,6 +76,7 @@ async function validateKey(key: string): Promise<ApiKeyRecord | null> {
       active: true,
       expiresAt: null,
       lastUsedAt: null,
+      requireTotp: false,
       version: 0,
       createdAt: new Date(0),
     };
@@ -94,6 +97,7 @@ async function validateKey(key: string): Promise<ApiKeyRecord | null> {
       active: true,
       expiresAt: null,
       lastUsedAt: null,
+      requireTotp: false,
       version: 0,
       createdAt: new Date(0),
     };
@@ -211,6 +215,44 @@ export default fp(
       if (keyRecord) {
         // Attach API key record to request
         (request as any).__apiKey = keyRecord;
+
+        // ── S15: TOTP check for admin routes ──
+        const path = url.split('?')[0];
+        if (path.startsWith(ADMIN_PREFIX) && (keyRecord as any).requireTotp) {
+          const totpCode = request.headers['x-totp'];
+          if (typeof totpCode !== 'string' || totpCode.length === 0) {
+            request.log.warn({
+              msg: 'totp_required',
+              keyFingerprint: fingerprint(apiKey),
+              ip: request.ip,
+              route: url,
+            });
+            return reply.status(401).send({
+              error: 'TOTP Required',
+              message: 'Esta chave requer autenticação de dois fatores. Envie o código no header X-TOTP.',
+            });
+          }
+
+          const totpValid = await validateRequestTotp(
+            prisma as any,
+            keyRecord.id,
+            totpCode,
+          );
+
+          if (!totpValid) {
+            request.log.warn({
+              msg: 'totp_invalid',
+              keyFingerprint: fingerprint(apiKey),
+              ip: request.ip,
+              route: url,
+            });
+            return reply.status(401).send({
+              error: 'Invalid TOTP',
+              message: 'Código TOTP inválido ou expirado.',
+            });
+          }
+        }
+
         request.log.info({
           msg: 'auth_success',
           keyFingerprint: fingerprint(apiKey),

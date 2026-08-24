@@ -266,6 +266,7 @@ describe('S15 hasPermission', () => {
       active: true,
       expiresAt: null,
       lastUsedAt: null,
+      requireTotp: false,
       version: 1,
       createdAt: new Date(),
     };
@@ -313,6 +314,7 @@ describe('S15 canAccessCampaign', () => {
       active: true,
       expiresAt: null,
       lastUsedAt: null,
+      requireTotp: false,
       version: 1,
       createdAt: new Date(),
     };

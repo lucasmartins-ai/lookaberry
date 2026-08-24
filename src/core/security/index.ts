@@ -11,3 +11,4 @@ export * from './auditTrail.js';
 export * from './suppression.js';
 export * from './retention.js';
 export * from './secretsMasking.js';
+export * from './totp.js';

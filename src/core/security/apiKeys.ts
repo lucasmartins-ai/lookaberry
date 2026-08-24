@@ -41,6 +41,7 @@ export interface ApiKeyRecord {
   active: boolean;
   expiresAt: Date | null;
   lastUsedAt: Date | null;
+  requireTotp: boolean;
   version: number;
   createdAt: Date;
 }
@@ -136,6 +137,7 @@ export async function createApiKey(
       active: true,
       expiresAt,
       lastUsedAt: null,
+      requireTotp: false,
       version: 1,
       createdAt: new Date(),
     },
@@ -213,6 +215,7 @@ export async function rotateApiKey(
       active: true,
       expiresAt: existing.expiresAt,
       lastUsedAt: null,
+      requireTotp: false,
       version: newVersion,
       createdAt: new Date(),
     },
