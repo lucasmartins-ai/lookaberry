@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isAllowedPath } from '@/lib/proxyAllowlist';
 
 const upstreamBaseUrl = (process.env.API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
@@ -8,11 +9,13 @@ interface ProxyContext {
 
 async function proxy(request: NextRequest, context: ProxyContext) {
   const { path } = await context.params;
-  // The proxy carries the server's API key; never let it reach admin routes.
-  if (path[0] === 'v1' && path[1] === 'admin') {
+  // Segments are re-encoded so `?`, `#`, `/` or `..` inside one can't reshape the upstream URL.
+  const upstreamUrl = new URL(`${upstreamBaseUrl}/api/${path.map(encodeURIComponent).join('/')}`);
+  // The proxy carries the server's API key, so only the routes the dashboard uses are forwarded.
+  // Checked on the decoded path, which is what the upstream router sees.
+  if (!isAllowedPath(decodeURIComponent(upstreamUrl.pathname))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-  const upstreamUrl = new URL(`${upstreamBaseUrl}/api/${path.join('/')}`);
   upstreamUrl.search = new URL(request.url).search;
 
   const headers = new Headers();
