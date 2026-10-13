@@ -3,6 +3,28 @@ import { z } from 'zod';
 import { prisma } from '../../db/client.js';
 import { executionRouter } from '../../core/execution/index.js';
 import type { ExecutionContext } from '../../core/execution/types.js';
+import { shouldBlockLead, type SuppressionStore } from '../../core/security/suppression.js';
+
+const BLOCKED_STATUSES = new Set(['UNSUBSCRIBED', 'BOUNCED', 'REPLIED_NEGATIVE']);
+// ponytail: per-process counter (resets on restart); move to the DB if MCP sends become a main channel
+const MCP_DAILY_LIMIT = Number(process.env.WHATSAPP_MCP_DAILY_LIMIT ?? 50);
+let mcpSent = { day: '', count: 0 };
+
+function sentTodayCount(): number {
+  const day = new Date().toISOString().slice(0, 10);
+  if (mcpSent.day !== day) mcpSent = { day, count: 0 };
+  return mcpSent.count;
+}
+
+/** Same opt-out rules as the dispatcher: lead status + global suppression list. Returns a reason or null. */
+export async function whatsappBlockReason(
+  store: SuppressionStore,
+  lead: { id: string; status?: string | null; email?: string | null; linkedinUrl?: string | null; company?: { domain?: string | null } | null },
+): Promise<string | null> {
+  if (lead.status && BLOCKED_STATUSES.has(lead.status)) return `Lead status ${lead.status}`;
+  const check = await shouldBlockLead(store, lead);
+  return check.blocked ? (check.reason ?? 'Lead suppressed') : null;
+}
 
 const GtmSendWhatsAppInputSchema = z.object({
   lead_id: z.string().describe('UUID do lead.'),
@@ -41,6 +63,14 @@ export function registerWhatsAppTool(server: McpServer) {
           return { isError: true, content: [{ type: 'text', text: `Lead ${lead.fullName} não possui telefone cadastrado.` }] };
         }
 
+        const blockReason = await whatsappBlockReason(prisma as any, lead);
+        if (blockReason) {
+          return { isError: true, content: [{ type: 'text', text: `Envio bloqueado para ${lead.fullName}: ${blockReason}` }] };
+        }
+        if (!args.dryRun && sentTodayCount() >= MCP_DAILY_LIMIT) {
+          return { isError: true, content: [{ type: 'text', text: `Limite diário de ${MCP_DAILY_LIMIT} envios WhatsApp via MCP atingido.` }] };
+        }
+
         const body = args.body ?? `Olá {{firstName}}, tudo bem?`;
         const templateName = args.template_name ?? process.env.WHATSAPP_TEMPLATE_NAME ?? '';
 
@@ -66,8 +96,8 @@ export function registerWhatsAppTool(server: McpServer) {
             id: 'mcp-default',
             provider: 'whatsapp',
             externalId: 'mcp',
-            dailyLimit: 50,
-            sentToday: 0,
+            dailyLimit: MCP_DAILY_LIMIT,
+            sentToday: sentTodayCount(),
             pausedUntil: null,
             sessionKey: null,
           },
@@ -90,6 +120,7 @@ export function registerWhatsAppTool(server: McpServer) {
           },
           context,
         );
+        if (result.success && !context.dryRun) mcpSent.count++;
 
         return {
           content: [
