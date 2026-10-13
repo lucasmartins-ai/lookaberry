@@ -10,6 +10,12 @@ const WEBHOOK_ROUTE = '/api/v1/webhooks/outreach';
 const EMAIL_WEBHOOK_ROUTE = '/api/v1/email/webhooks/resend';
 const WHATSAPP_WEBHOOK_ROUTE = '/api/v1/webhooks/whatsapp';
 const ADMIN_PREFIX = '/api/v1/admin';
+/** Routes that can change suppression or keys: keys with requireTotp must send X-TOTP here. */
+const TOTP_PREFIXES = [ADMIN_PREFIX, '/api/v1/events'];
+
+function isTotpProtected(path: string): boolean {
+  return TOTP_PREFIXES.some(p => path === p || path.startsWith(p + '/'));
+}
 
 interface ApiKeyCacheEntry {
   record: ApiKeyRecord;
@@ -210,7 +216,7 @@ export default fp(
 
         // ── S15: TOTP check for admin routes ──
         const path = url.split('?')[0];
-        if (path.startsWith(ADMIN_PREFIX) && (keyRecord as any).requireTotp) {
+        if (isTotpProtected(path) && (keyRecord as any).requireTotp) {
           const totpCode = request.headers['x-totp'];
           if (typeof totpCode !== 'string' || totpCode.length === 0) {
             request.log.warn({
@@ -275,4 +281,4 @@ export default fp(
   },
 );
 
-export { authenticateApiKey, extractApiKey, getEnvKeys, fingerprint, isExempt, validateKey, clearKeyCache };
+export { authenticateApiKey, extractApiKey, getEnvKeys, fingerprint, isExempt, isTotpProtected, validateKey, clearKeyCache };

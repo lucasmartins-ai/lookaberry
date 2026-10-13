@@ -5,7 +5,7 @@ vi.mock('../../src/db/client.js', () => ({
   prisma: { apiKey: { findUnique, update: vi.fn().mockResolvedValue({}) } },
 }));
 
-const { validateKey, clearKeyCache } = await import('../../src/api/plugins/auth.js');
+const { validateKey, clearKeyCache, isTotpProtected } = await import('../../src/api/plugins/auth.js');
 
 const viewerKey = {
   id: 'key-viewer',
@@ -44,5 +44,14 @@ describe('API key cache', () => {
     expect(await validateKey('sk_db_viewer')).not.toBeNull();
     clearKeyCache();
     expect(await validateKey('sk_db_viewer')).toBeNull();
+  });
+});
+
+describe('TOTP-protected routes', () => {
+  it('covers admin and event ingestion (both can write suppression), not ordinary routes', () => {
+    expect(isTotpProtected('/api/v1/admin/api-keys')).toBe(true);
+    expect(isTotpProtected('/api/v1/events')).toBe(true);
+    expect(isTotpProtected('/api/v1/eventsX')).toBe(false);
+    expect(isTotpProtected('/api/v1/campaigns')).toBe(false);
   });
 });
