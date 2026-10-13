@@ -54,6 +54,8 @@ enum ChannelType {
   LINKEDIN_MESSAGE
   EMAIL
   MANUAL_TASK
+  WHATSAPP
+  INSTAGRAM_DM
 
   @@map("channel_enum")
 }
@@ -165,6 +167,12 @@ model Company {
   country        String?                      @db.VarChar(100)
   techStack      String[]                     @default([]) @map("tech_stack")
   description    String?                      @db.Text
+  latitude       Decimal?                     @map("latitude") @db.Decimal(10, 7)
+  longitude      Decimal?                     @map("longitude") @db.Decimal(10, 7)
+  instagramUrl   String?                      @map("instagram_url") @db.VarChar(500)
+  twitterUrl     String?                      @map("twitter_url") @db.VarChar(500)
+  facebookUrl    String?                      @map("facebook_url") @db.VarChar(500)
+  whatsappPhone  String?                      @map("whatsapp_phone") @db.VarChar(50)
   icpFitScore    Decimal?                     @default(0.00) @map("icp_fit_score") @db.Decimal(5, 2)
   embedding      Unsupported("vector(1536)")?
   lastEnrichedAt DateTime?                    @map("last_enriched_at") @db.Timestamptz(6)
