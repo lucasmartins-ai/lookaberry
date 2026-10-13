@@ -349,7 +349,7 @@ LookaBerry/
 │   │   └── transports/      # stdio and SSE transport entrypoints
 │   ├── api/
 │   │   ├── server.ts        # Fastify factory with CORS and Swagger UI
-│   │   ├── routes/          # /health, /api/v1/icp/analyze, /sse, /messages, /webhooks
+│   │   ├── routes/          # /health, /api/v1/icp/analyze, /api/v1/events, /sse, /messages, /webhooks
 │   │   └── plugins/         # OpenAPI 3.1 schema documentation
 │   └── index.ts             # Server entrypoint with all workers & scheduler
 └── tests/

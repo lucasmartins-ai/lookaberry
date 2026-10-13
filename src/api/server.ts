@@ -13,6 +13,7 @@ import ipFilter from '../api/plugins/ipFilter.js';
 import { setupSwagger } from '../api/plugins/swagger.js';
 import { healthRoutes } from '../api/routes/health.js';
 import { icpRoutes } from '../api/routes/icp.js';
+import { eventRoutes } from './routes/events.js';
 import { mcpSseRoutes } from '../api/routes/mcpSse.js';
 import { webhookRoutes } from '../api/routes/webhooks.js';
 import { emailTrackingRoutes } from '../api/routes/emailTracking.js';
@@ -103,6 +104,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(whatsappWebhookRoutes);
   await app.register(campaignRoutes);
   await app.register(adminRoutes);
+  await app.register(eventRoutes);
 
   return app;
 }
