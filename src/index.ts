@@ -81,6 +81,11 @@ async function bootstrap() {
     // Graceful Shutdown
     const shutdown = async (signal: string) => {
       console.log(`\n[LookaBerry] Received ${signal}. Shutting down gracefully...`);
+      // A worker/queue close can hang; never outlive the supervisor (orphans keep consuming queues).
+      setTimeout(() => {
+        console.error('[LookaBerry] Shutdown timed out after 10s, forcing exit.');
+        process.exit(1);
+      }, 10_000).unref();
       try {
         scheduler.stop();
         retentionScheduler.stop();
