@@ -1,8 +1,7 @@
 /**
  * S10: A/B Testing Framework
  *
- * - Weighted random variant selection (proportional to variantWeight)
- * - Sticky assignment: same lead + variantGroup → always same variant (consistent hash)
+ * - Weighted, sticky variant selection: same lead + variantGroup → always same variant (consistent hash)
  * - Bayesian winner detection (Beta distribution, Beta(1,1) prior)
  * - Auto-promotion of winning variants (optional, off by default)
  */
@@ -25,61 +24,31 @@ export interface VariantAssignmentContext {
 }
 
 /**
- * Select a variant from a group using weighted random selection
- * with sticky assignment (same lead always gets the same variant).
- *
- * Sticky assignment ensures follow-ups use the same variant consistently.
+ * Select a variant from a group, weighted by variantWeight, with sticky assignment:
+ * the lead's hash picks a point in [0, 1), so the same lead + group always gets the
+ * same variant and, across leads, each variant gets traffic proportional to its weight.
  */
 export function selectVariant(
   variants: TestVariant[],
   leadContext: VariantAssignmentContext,
-  randomFn: () => number = Math.random,
 ): TestVariant {
   if (variants.length === 0) {
     throw new Error('No variants provided for selection');
   }
 
-  if (variants.length === 1) {
-    return variants[0]!;
-  }
-
-  // Filter to active variants only (weight > 0)
   const active = variants.filter(v => v.variantWeight > 0);
-  if (active.length === 0) {
-    return variants[0]!; // fallback: all weights zero
-  }
+  if (active.length === 0) return variants[0]!; // fallback: all weights zero
+  if (active.length === 1) return active[0]!;
 
-  if (active.length === 1) {
-    return active[0]!;
-  }
-
-  // Sticky assignment: consistent hash of leadId + variantGroup
   const group = active[0]!.variantGroup;
-  const stickyIndex = consistentHash(leadContext.leadId + '::' + group, active.length);
-
-  // Weighted selection: normalize weights to probabilities
+  const point = consistentHash(leadContext.leadId + '::' + group, 1_000_000) / 1_000_000;
   const totalWeight = active.reduce((sum, v) => sum + v.variantWeight, 0);
-  let rand = randomFn() * totalWeight;
 
-  // Use sticky assignment to bias the random (85% sticky, 15% exploration)
-  const stickyBias = 0.85;
-  const exploreBias = 1 - stickyBias;
-
-  // Blend: some exploration, mostly sticky
-  const blendedIndex = randomFn() < stickyBias
-    ? stickyIndex
-    : Math.floor(randomFn() * active.length);
-
-  // But also respect weights for non-sticky selection
   let cumWeight = 0;
-  for (let i = 0; i < active.length; i++) {
-    cumWeight += active[i]!.variantWeight;
-    if (rand <= cumWeight) {
-      // 85% of the time, use sticky; 15% use weighted random
-      return active[randomFn() < stickyBias ? stickyIndex : i]!;
-    }
+  for (const variant of active) {
+    cumWeight += variant.variantWeight / totalWeight;
+    if (point < cumWeight) return variant;
   }
-
   return active[active.length - 1]!;
 }
 

@@ -36,20 +36,17 @@ describe('selectVariant', () => {
       .toThrow('No variants provided');
   });
 
-  it('sticky assignment: same lead gets same variant consistently', () => {
+  it('sticky assignment: same lead always gets the same variant', () => {
     const variants = [
       makeVariant({ id: 'v1', variantWeight: 1 }),
       makeVariant({ id: 'v2', variantWeight: 1 }),
     ];
-
-    // Run multiple times — should get the same result (sticky)
-    const results = new Set<string>();
-    for (let i = 0; i < 20; i++) {
-      results.add(selectVariant(variants, { leadId: 'lead-1' }).id);
+    for (let lead = 0; lead < 50; lead++) {
+      const first = selectVariant(variants, { leadId: `lead-${lead}` }).id;
+      for (let i = 0; i < 10; i++) {
+        expect(selectVariant(variants, { leadId: `lead-${lead}` }).id).toBe(first);
+      }
     }
-    // With high sticky bias (0.85), we should see consistency
-    // But there's 15% exploration, so we might see both. Let's just verify it works.
-    expect(results.size).toBeGreaterThanOrEqual(1);
   });
 
   it('different leads may get different variants', () => {
@@ -83,11 +80,11 @@ describe('selectVariant', () => {
       counts[result.id]!++;
     }
 
-    // v2 should have more selections (sticky bias reduces weight effect but still)
-    // We just verify all variants are selected at least a few times
-    expect(counts.v1!).toBeGreaterThan(0);
-    expect(counts.v2!).toBeGreaterThan(0);
-    expect(counts.v3!).toBeGreaterThan(0);
+    // Traffic follows the weights: v2 (weight 3 of 5) gets ~60%
+    expect(counts.v2! / 1000).toBeGreaterThan(0.5);
+    expect(counts.v2! / 1000).toBeLessThan(0.7);
+    expect(counts.v1!).toBeGreaterThan(100);
+    expect(counts.v3!).toBeGreaterThan(100);
   });
 
   it('filters out zero-weight variants', () => {

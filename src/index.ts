@@ -7,6 +7,7 @@ import { createDispatcherWorker } from './core/execution/dispatcher.js';
 import { createInboxWorker } from './core/execution/inboxWorker.js';
 import { SequenceScheduler } from './core/execution/scheduler.js';
 import { RetentionScheduler } from './core/execution/retentionScheduler.js';
+import { autoPromoteAbWinners } from './core/execution/abPromotion.js';
 import { closeQueues } from './core/queues/queue.js';
 import { prisma } from './db/client.js';
 
@@ -55,6 +56,13 @@ async function bootstrap() {
     retentionScheduler.start();
     console.log('✅ Retention Scheduler active (1h interval)');
 
+    // 3c. A/B auto-promotion (opt-in, hourly)
+    const abTimer = config.AB_TEST_AUTO_PROMOTE
+      ? setInterval(() => {
+          autoPromoteAbWinners().catch(err => console.warn('[ABPromotion] failed:', err instanceof Error ? err.message : String(err)));
+        }, 3_600_000)
+      : null;
+
     // 4. Build & start Fastify API and MCP SSE server
     const app = await buildServer();
 
@@ -76,6 +84,7 @@ async function bootstrap() {
       try {
         scheduler.stop();
         retentionScheduler.stop();
+        if (abTimer) clearInterval(abTimer);
         await app.close();
         await icpWorker.close();
         await enrichmentWorker.close();

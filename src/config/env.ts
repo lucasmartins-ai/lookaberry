@@ -3,6 +3,11 @@ import { z } from 'zod';
 
 dotenv.config();
 
+/** "true"/"1"/"yes"/"on" → true; anything else → false. (z.coerce.boolean() turns "false" into true.) */
+const envBool = (fallback: boolean) =>
+  z.union([z.boolean(), z.string()]).optional()
+    .transform(v => (v === undefined || v === '' ? fallback : typeof v === 'boolean' ? v : ['true', '1', 'yes', 'on'].includes(v.trim().toLowerCase())));
+
 const envSchema = z.object({
   DATABASE_URL: z.string().default('postgresql://postgres:postgrespassword@127.0.0.1:5433/lookaberry?schema=public'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
@@ -12,7 +17,7 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().default(''),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   ANTHROPIC_API_KEY: z.string().optional().default(''),
-  ANTHROPIC_MODEL: z.string().default('claude-3-5-haiku-latest'),
+  ANTHROPIC_MODEL: z.string().default('claude-haiku-5-5'),
   OPENAI_API_KEY: z.string().optional().default(''),
   LOOKACRAWLER_URL: z.string().optional().default(''),
   JINA_API_KEY: z.string().optional().default(''),
@@ -39,11 +44,11 @@ const envSchema = z.object({
   SMTP_PORT: z.coerce.number().default(587),
   SMTP_USER: z.string().default(''),
   SMTP_PASS: z.string().default(''),
-  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_SECURE: envBool(false),
   EMAIL_REPLY_TO: z.string().default(''),
   EMAIL_FROM_NAME: z.string().default(''),
   EMAIL_FROM_ADDRESS: z.string().default(''),
-  EMAIL_TRACKING_ENABLED: z.coerce.boolean().default(true),
+  EMAIL_TRACKING_ENABLED: envBool(true),
   // Public base URL used to build tracking pixel / click redirect URLs
   PUBLIC_BASE_URL: z.string().default('http://localhost:3000'),
 
@@ -62,7 +67,7 @@ const envSchema = z.object({
   SCHEDULE_BUSINESS_HOURS_START: z.string().default('09:00'),
   SCHEDULE_BUSINESS_HOURS_END: z.string().default('18:00'),
   SCHEDULE_DAYS_OF_WEEK: z.string().default('1,2,3,4,5'),
-  SCHEDULE_RESPECT_LEAD_TIMEZONE: z.coerce.boolean().default(true),
+  SCHEDULE_RESPECT_LEAD_TIMEZONE: envBool(true),
   SCHEDULE_DEFAULT_TIMEZONE: z.string().default('America/Sao_Paulo'),
   WHATSAPP_BUSINESS_HOURS_START: z.string().default('08:00'),
   WHATSAPP_BUSINESS_HOURS_END: z.string().default('20:00'),
@@ -70,7 +75,7 @@ const envSchema = z.object({
   // S10: A/B Testing
   AB_TEST_MIN_SAMPLES: z.coerce.number().default(100),
   AB_TEST_CONFIDENCE: z.coerce.number().default(0.95),
-  AB_TEST_AUTO_PROMOTE: z.coerce.boolean().default(false),
+  AB_TEST_AUTO_PROMOTE: envBool(false),
 
   // S10: Global Cadence Control
   GLOBAL_MAX_MESSAGES_PER_MINUTE: z.coerce.number().default(60),
