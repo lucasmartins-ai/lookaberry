@@ -290,6 +290,16 @@ describe('Webhook HMAC signature validation', () => {
     expect(body.error).toBe('Invalid signature');
   });
 
+  it('rejects unsigned webhook even with a query string appended', async () => {
+    const res = await inject(app, {
+      method: 'POST',
+      path: '/api/v1/webhooks/outreach?x=1',
+      body: validBody,
+    });
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).error).toBe('Invalid signature');
+  });
+
   it('rejects webhook with invalid signature', async () => {
     const ts = Math.floor(Date.now()).toString();
     const res = await inject(app, {

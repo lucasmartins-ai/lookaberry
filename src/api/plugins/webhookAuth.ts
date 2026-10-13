@@ -9,6 +9,11 @@ const WHATSAPP_WEBHOOK_ROUTE = '/api/v1/webhooks/whatsapp';
 const WEBHOOK_ROUTES = [WEBHOOK_ROUTE, RESEND_WEBHOOK_ROUTE, WHATSAPP_WEBHOOK_ROUTE];
 const TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 
+/** Matched route pattern (never includes the query string), so `?x=1` can't dodge signature checks. */
+function routeOf(request: FastifyRequest): string {
+  return request.routeOptions?.url ?? request.url.split('?')[0];
+}
+
 function computeHmac(payload: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
@@ -26,7 +31,7 @@ async function validateWebhookSignature(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (request.url !== WEBHOOK_ROUTE) return;
+  if (routeOf(request) !== WEBHOOK_ROUTE) return;
 
   // Dev/test: skip if WEBHOOK_SECRET not configured
   const secret = process.env.WEBHOOK_SECRET ?? config.WEBHOOK_SECRET;
@@ -101,7 +106,7 @@ export async function validateSvixSignature(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (request.url !== RESEND_WEBHOOK_ROUTE) return;
+  if (routeOf(request) !== RESEND_WEBHOOK_ROUTE) return;
 
   // Dev/test: skip if RESEND_WEBHOOK_SECRET not configured
   const secret = process.env.RESEND_WEBHOOK_SECRET ?? config.RESEND_WEBHOOK_SECRET;
@@ -231,7 +236,7 @@ export default fp(
   async function webhookAuth(app: FastifyInstance) {
     // Capture raw body for webhook routes BEFORE Fastify parses them
     app.addHook('preParsing', async (request, _reply, payload) => {
-      if (WEBHOOK_ROUTES.includes(request.url) && payload) {
+      if (WEBHOOK_ROUTES.includes(routeOf(request)) && payload) {
         const chunks: Buffer[] = [];
         for await (const chunk of payload) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -255,13 +260,14 @@ export default fp(
     // Validate signature in preHandler (after body is parsed)
     app.addHook('preHandler', async (request, reply) => {
       if (request.method !== 'POST') return;
-      if (request.url === WEBHOOK_ROUTE) {
+      const route = routeOf(request);
+      if (route === WEBHOOK_ROUTE) {
         await validateWebhookSignature(request, reply);
       }
-      if (request.url === RESEND_WEBHOOK_ROUTE) {
+      if (route === RESEND_WEBHOOK_ROUTE) {
         await validateSvixSignature(request, reply);
       }
-      if (request.url === WHATSAPP_WEBHOOK_ROUTE) {
+      if (route === WHATSAPP_WEBHOOK_ROUTE) {
         await validateWhatsAppSignature(request, reply);
       }
     });
