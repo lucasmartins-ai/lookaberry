@@ -5,7 +5,7 @@ vi.mock('../../src/db/client.js', () => ({
   prisma: { apiKey: { findUnique, update: vi.fn().mockResolvedValue({}) } },
 }));
 
-const { validateKey, clearKeyCache, isTotpProtected } = await import('../../src/api/plugins/auth.js');
+const { validateKey, clearKeyCache, isTotpProtected, routePath } = await import('../../src/api/plugins/auth.js');
 
 const viewerKey = {
   id: 'key-viewer',
@@ -53,5 +53,13 @@ describe('TOTP-protected routes', () => {
     expect(isTotpProtected('/api/v1/events')).toBe(true);
     expect(isTotpProtected('/api/v1/eventsX')).toBe(false);
     expect(isTotpProtected('/api/v1/campaigns')).toBe(false);
+    expect(isTotpProtected('/sse')).toBe(true);
+    expect(isTotpProtected('/messages')).toBe(true);
+  });
+
+  it('checks the routed path: matched pattern first, else the decoded URL', () => {
+    expect(routePath({ routeOptions: { url: '/api/v1/events' }, url: '/api/v1/%65vents?x=1' } as any)).toBe('/api/v1/events');
+    expect(routePath({ routeOptions: {}, url: '/api/v1/%65vents?x=1' } as any)).toBe('/api/v1/events');
+    expect(isTotpProtected(routePath({ routeOptions: {}, url: '/api/v1/%61dmin/api-keys' } as any))).toBe(true);
   });
 });

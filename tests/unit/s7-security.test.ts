@@ -48,6 +48,11 @@ describe('Auth middleware', () => {
     process.env = ORIGINAL_ENV;
   });
 
+  it('a percent-encoded path still hits the auth gate (no raw-URL parser differential)', async () => {
+    const res = await inject(app, { method: 'GET', path: '/api/v1/icp/%30%30000000-0000-0000-0000-000000000001' });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('accepts valid Bearer token', async () => {
     const res = await inject(app, {
       method: 'GET',

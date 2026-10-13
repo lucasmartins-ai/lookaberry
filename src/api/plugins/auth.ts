@@ -10,8 +10,27 @@ const WEBHOOK_ROUTE = '/api/v1/webhooks/outreach';
 const EMAIL_WEBHOOK_ROUTE = '/api/v1/email/webhooks/resend';
 const WHATSAPP_WEBHOOK_ROUTE = '/api/v1/webhooks/whatsapp';
 const ADMIN_PREFIX = '/api/v1/admin';
-/** Routes that can change suppression or keys: keys with requireTotp must send X-TOTP here. */
-const TOTP_PREFIXES = [ADMIN_PREFIX, '/api/v1/events'];
+/**
+ * Routes that can change keys or suppression: keys with requireTotp must send X-TOTP here.
+ * (/sse + /messages: MCP tools such as record_feedback can trigger an opt-out cascade.)
+ */
+const TOTP_PREFIXES = [ADMIN_PREFIX, '/api/v1/events', '/sse', '/messages'];
+
+/**
+ * The path the router actually matched: the registered route pattern when there is one,
+ * else the percent-decoded path. Checking the raw URL let "/api/v1/%65vents" reach the
+ * events route while dodging prefix checks.
+ */
+function routePath(request: FastifyRequest): string {
+  const pattern = request.routeOptions?.url;
+  if (pattern) return pattern;
+  const raw = request.url.split('?')[0];
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
 
 function isTotpProtected(path: string): boolean {
   return TOTP_PREFIXES.some(p => path === p || path.startsWith(p + '/'));
@@ -138,7 +157,7 @@ async function authenticateApiKey(
   reply: FastifyReply,
 ): Promise<void> {
   const url = request.url;
-  if (isExempt(url)) {
+  if (isExempt(routePath(request))) {
     return;
   }
 
@@ -197,7 +216,8 @@ export default fp(
       if (process.env.NODE_ENV === 'test') return;
 
       const url = request.url;
-      if (isExempt(url)) return;
+      const path = routePath(request);
+      if (isExempt(path)) return;
 
       const apiKey = extractApiKey(request);
       if (!apiKey) {
@@ -214,8 +234,7 @@ export default fp(
         // Attach API key record to request
         (request as any).__apiKey = keyRecord;
 
-        // ── S15: TOTP check for admin routes ──
-        const path = url.split('?')[0];
+        // ── S15: TOTP check for key/suppression-changing routes ──
         if (isTotpProtected(path) && (keyRecord as any).requireTotp) {
           const totpCode = request.headers['x-totp'];
           if (typeof totpCode !== 'string' || totpCode.length === 0) {
@@ -281,4 +300,4 @@ export default fp(
   },
 );
 
-export { authenticateApiKey, extractApiKey, getEnvKeys, fingerprint, isExempt, isTotpProtected, validateKey, clearKeyCache };
+export { authenticateApiKey, extractApiKey, getEnvKeys, fingerprint, isExempt, isTotpProtected, routePath, validateKey, clearKeyCache };
