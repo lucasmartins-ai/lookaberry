@@ -4,6 +4,7 @@ import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import * as cheerio from 'cheerio';
 import { config } from '../../config/env.js';
+import { assertPublicUrl, safeHttpOptions } from '../security/ssrf.js';
 
 export interface ScrapedContent {
   url: string;
@@ -109,6 +110,8 @@ export async function scrapeWebsite(targetUrl: string): Promise<ScrapedContent> 
   }
 
   const url = parsedUrl.toString();
+  // SSRF guard: refuse internal/metadata targets before any strategy (incl. remote crawler) touches the URL
+  await assertPublicUrl(url);
 
   // Strategy 1: Remote LookaCrawler service if configured
   if (config.LOOKACRAWLER_URL) {
@@ -142,7 +145,7 @@ export async function scrapeWebsite(targetUrl: string): Promise<ScrapedContent> 
         'Accept-Language': 'en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7',
       },
       timeout: 15000,
-      maxRedirects: 5,
+      ...safeHttpOptions,
     });
 
     if (typeof response.data === 'string' && response.data.length > 50) {
@@ -190,7 +193,7 @@ export async function scrapeWebsite(targetUrl: string): Promise<ScrapedContent> 
 
   // Strategy 4: Minimal Cheerio Fallback
   try {
-    const response = await axios.get(url, { timeout: 10000 });
+    const response = await axios.get(url, { timeout: 10000, ...safeHttpOptions });
     const $ = cheerio.load(response.data);
     const title = $('title').text().trim() || parsedUrl.hostname;
     $('script, style, svg, nav, footer').remove();

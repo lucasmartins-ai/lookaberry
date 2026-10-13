@@ -3,6 +3,8 @@ import * as cheerio from 'cheerio';
 import { buildEvidenceContentHash, normalizeConfidence, sanitizeEvidenceData } from '../../evidence/service.js';
 import type { NormalizedSignal, RawSignal, SignalProviderError } from './types.js';
 import { SignalProviderError as ProviderError } from './types.js';
+import axios from 'axios';
+import { assertPublicUrl, safeHttpOptions } from '../../security/ssrf.js';
 
 const MAX_SOURCE_URL_LENGTH = 1_000;
 const MAX_TITLE_LENGTH = 500;
@@ -79,28 +81,28 @@ export function isOfficialCompanyUrl(sourceUrl: string | undefined, companyDomai
 }
 
 export async function fetchPublicUrl(url: string, timeoutMs = 10_000): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      signal: controller.signal,
+    await assertPublicUrl(url);
+    const response = await axios.get<string>(url, {
+      ...safeHttpOptions,
+      timeout: timeoutMs,
+      responseType: 'text',
+      validateStatus: () => true,
       headers: {
         accept: 'text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8',
         'user-agent': 'LookaBerry/0.1 public-signal-provider',
       },
     });
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       throw new ProviderError('FAILED', `Public URL returned HTTP ${response.status}: ${url}`);
     }
-    return (await response.text()).slice(0, MAX_FETCH_BYTES);
+    return String(response.data ?? '').slice(0, MAX_FETCH_BYTES);
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (error instanceof ProviderError) throw error;
+    if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
       throw new ProviderError('TIMEOUT', `Timed out fetching public URL: ${url}`);
     }
-    if (error instanceof ProviderError) throw error;
     throw new ProviderError('FAILED', error instanceof Error ? error.message : `Failed to fetch public URL: ${url}`);
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
