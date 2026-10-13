@@ -12,11 +12,16 @@ const WHATSAPP_WEBHOOK_ROUTE = '/api/v1/webhooks/whatsapp';
 const ADMIN_PREFIX = '/api/v1/admin';
 
 interface ApiKeyCacheEntry {
-  key: string;
+  record: ApiKeyRecord;
   expiresAt: number;
 }
 
 const keyCache = new Map<string, ApiKeyCacheEntry>();
+
+/** Drop cached key records; call after any key mutation (revoke, rotate, TOTP change). */
+function clearKeyCache(): void {
+  keyCache.clear();
+}
 
 function fingerprint(key: string): string {
   if (key.length <= 8) return key.slice(0, 4);
@@ -82,26 +87,13 @@ async function validateKey(key: string): Promise<ApiKeyRecord | null> {
     };
   }
 
-  // Check cache
+  // Check cache — return the real DB record, never a synthesized one
   const cached = keyCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
-    // Return a minimal record from cache (we cache only valid keys)
-    return {
-      id: 'cached-key',
-      key,
-      name: 'cached',
-      permission: 'ADMIN' as any,
-      userId: null,
-      teamId: null,
-      campaignIds: [],
-      active: true,
-      expiresAt: null,
-      lastUsedAt: null,
-      requireTotp: false,
-      version: 0,
-      createdAt: new Date(0),
-    };
+    const { record } = cached;
+    if (!record.expiresAt || new Date(record.expiresAt) >= new Date()) return record;
   }
+  keyCache.delete(key);
 
   // Check DB (S15: ApiKey model)
   try {
@@ -124,7 +116,7 @@ async function validateKey(key: string): Promise<ApiKeyRecord | null> {
       }).catch(() => {});
 
       // Cache the hit
-      keyCache.set(key, { key, expiresAt: Date.now() + 60_000 });
+      keyCache.set(key, { record: dbKey as ApiKeyRecord, expiresAt: Date.now() + 60_000 });
 
       return dbKey as ApiKeyRecord;
     }
@@ -283,4 +275,4 @@ export default fp(
   },
 );
 
-export { authenticateApiKey, extractApiKey, getEnvKeys, fingerprint, isExempt, validateKey };
+export { authenticateApiKey, extractApiKey, getEnvKeys, fingerprint, isExempt, validateKey, clearKeyCache };

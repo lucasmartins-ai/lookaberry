@@ -17,6 +17,7 @@ import {
   type ApiKeyRecord,
 } from '../../core/security/apiKeys.js';
 import { recordAudit, queryAuditLogs } from '../../core/security/auditTrail.js';
+import { clearKeyCache } from '../plugins/auth.js';
 import {
   unsubscribeLead,
   addToSuppressionList,
@@ -122,6 +123,7 @@ export async function adminRoutes(app: FastifyInstance) {
         { apiKey: db.apiKey, auditLog: db.auditLog },
         (request.params as { id: string }).id,
       );
+      clearKeyCache();
       return {
         message: 'Chave rotacionada com sucesso.',
         apiKey: { id: record.id, name: record.name, permission: record.permission, version: record.version },
@@ -144,6 +146,7 @@ export async function adminRoutes(app: FastifyInstance) {
         { apiKey: db.apiKey, auditLog: db.auditLog },
         (request.params as { id: string }).id,
       );
+      clearKeyCache();
       return { message: 'Chave revogada com sucesso.' };
     } catch (err: any) {
       const status = err.message.includes('not found') ? 404 : 400;
@@ -357,6 +360,7 @@ export async function adminRoutes(app: FastifyInstance) {
         (request.params as { apiKeyId: string }).apiKeyId,
         body.code,
       );
+      clearKeyCache();
       if (!result.confirmed) {
         return reply.status(400).send({ error: 'Código inválido', message: 'O código TOTP não corresponde. Tente novamente.' });
       }
@@ -380,6 +384,7 @@ export async function adminRoutes(app: FastifyInstance) {
         (request.params as { apiKeyId: string }).apiKeyId,
         body?.code,
       );
+      clearKeyCache();
       if (!result.disabled) {
         return reply.status(400).send({ error: 'Não foi possível desativar', message: result.reason });
       }
