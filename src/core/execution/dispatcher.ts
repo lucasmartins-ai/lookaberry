@@ -243,7 +243,39 @@ async function processSequenceStep(
       }
       if (leadState?.status === 'COMPLETED') continue;
 
-      const currentStep = sequence.steps[leadStepIndex];
+      // ── S10: Branching ──
+      // Evaluated when the lead's next step comes due, against the last message sent in this
+      // sequence. (Right after sending, nothing can have been opened/replied and no delay has elapsed.)
+      let stepIndex = leadStepIndex;
+      const stepIds = sequence.steps.map((s: any) => s.id);
+      const lastSent = await prisma.outreachMessage.findFirst({
+        where: { leadId: lead.id, stepId: { in: stepIds }, status: { notIn: ['QUEUED', 'SCHEDULED'] } },
+        orderBy: { createdAt: 'desc' },
+        select: { stepId: true, status: true, sentAt: true, openedAt: true, clickedAt: true, repliedAt: true },
+      }).catch(() => null);
+      const sentStep = lastSent ? sequence.steps.find((s: any) => s.id === lastSent.stepId) : undefined;
+      if (sentStep) {
+        const target = evaluateBranch({
+          lastMessage: lastSent,
+          currentStep: {
+            branchOn: sentStep.branchOn ?? 'NONE',
+            branchStepIndex: sentStep.branchStepIndex ?? null,
+            stepOrder: sentStep.stepOrder,
+            delayHours: sentStep.delayHours ?? 24,
+          },
+        });
+        if (target !== null && target !== stepIndex && target >= 0 && target < sequence.steps.length) {
+          stepIndex = target;
+          if (leadState) {
+            await prisma.leadSequenceState.update({
+              where: { id: leadState.id },
+              data: { currentStepIndex: stepIndex },
+            }).catch(() => {});
+          }
+        }
+      }
+
+      const currentStep = sequence.steps[stepIndex];
       if (!currentStep || !currentStep.active) {
         if (leadState) {
           await prisma.leadSequenceState.update({
@@ -589,24 +621,7 @@ async function processSequenceStep(
           await handlePostSendFeedback(result, messageToSend.id, lead.id, channelId)
             .catch(err => console.warn('[Dispatcher] Post-send feedback error:', err instanceof Error ? err.message : String(err)));
 
-          // S10: Branching
-          const lastMsg = await prisma.outreachMessage.findFirst({
-            where: { leadId: lead.id, status: { notIn: ['QUEUED', 'SCHEDULED'] } },
-            orderBy: { createdAt: 'desc' },
-            select: { status: true, sentAt: true, openedAt: true, clickedAt: true, repliedAt: true },
-          }).catch(() => null);
-
-          const branchResult = evaluateBranch({
-            lastMessage: lastMsg ?? null,
-            currentStep: {
-              branchOn: selectedStep.branchOn ?? 'NONE',
-              branchStepIndex: selectedStep.branchStepIndex ?? null,
-              stepOrder: selectedStep.stepOrder,
-              delayHours: selectedStep.delayHours ?? 24,
-            },
-          });
-
-          const nextStepIndex = branchResult ?? leadStepIndex + 1;
+          const nextStepIndex = stepIndex + 1; // branching is applied when this next step comes due
           if (leadState) {
             const totalSteps = sequence.steps.length;
             const nextStatus = nextStepIndex >= totalSteps ? 'COMPLETED' : 'ACTIVE';
