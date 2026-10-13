@@ -347,6 +347,7 @@ async function processSequenceStep(
           id: lead.id,
           email: lead.email,
           linkedinUrl: lead.linkedinUrl,
+          phone: lead.phone,
           company: { domain: lead.company?.domain },
         },
       );

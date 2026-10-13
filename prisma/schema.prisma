@@ -783,6 +783,7 @@ enum SuppressionType {
   EMAIL
   DOMAIN
   LINKEDIN_URL
+  PHONE
 
   @@map("suppression_type_enum")
 }
@@ -931,4 +932,34 @@ model TotpSecret {
   apiKey ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
 
   @@map("totp_secrets")
+}
+
+/// Outreach events from external executors (e.g. LOOKAORCHESTRATOR). Append-only, idempotent per
+/// (source, external_id). No raw PII: people are identified by person_hash (sha256 of the normalized
+/// email / LinkedIn URL / phone) and reply text is never stored.
+model OutreachEvent {
+  id             String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  source         String   @db.VarChar(50)
+  externalId     String   @map("external_id") @db.VarChar(200)
+  eventType      String   @map("event_type") @db.VarChar(30)
+  channel        String   @db.VarChar(50)
+  occurredAt     DateTime @map("occurred_at") @db.Timestamptz(6)
+  externalLeadId String?  @map("external_lead_id") @db.VarChar(200)
+  leadId         String?  @map("lead_id") @db.Uuid
+  personHash     String?  @map("person_hash") @db.VarChar(64)
+  companyDomain  String?  @map("company_domain") @db.VarChar(255)
+  segment        String?  @db.VarChar(120)
+  region         String?  @db.VarChar(120)
+  campaign       String?  @db.VarChar(120)
+  variant        String?  @db.VarChar(60)
+  intent         String?  @db.VarChar(30)
+  sentiment      String?  @db.VarChar(20)
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([source, externalId], map: "uq_outreach_events_source_external")
+  @@index([eventType, occurredAt], map: "idx_outreach_events_type_time")
+  @@index([segment, channel], map: "idx_outreach_events_segment_channel")
+  @@index([personHash], map: "idx_outreach_events_person")
+  @@map("outreach_events")
 }

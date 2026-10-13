@@ -64,7 +64,7 @@ const CreateKeySchema = z.object({
 });
 
 const AddSuppressionSchema = z.object({
-  suppressionType: z.enum(['EMAIL', 'DOMAIN', 'LINKEDIN_URL']),
+  suppressionType: z.enum(['EMAIL', 'DOMAIN', 'LINKEDIN_URL', 'PHONE']),
   value: z.string().min(1).max(500),
   reason: z.string().max(2000).optional(),
   leadId: z.string().uuid().optional(),

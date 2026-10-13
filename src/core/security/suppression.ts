@@ -14,7 +14,7 @@
 import type { PrismaClient } from '@prisma/client';
 
 /** Suppression type. Mirrors the SuppressionType enum in Prisma schema. */
-export type SuppressionType = 'EMAIL' | 'DOMAIN' | 'LINKEDIN_URL';
+export type SuppressionType = 'EMAIL' | 'DOMAIN' | 'LINKEDIN_URL' | 'PHONE';
 
 // ──────────────────────────────── Store Interface ────────────────────────────────
 
@@ -32,6 +32,7 @@ export interface SuppressionStore {
       id: string;
       email: string | null;
       linkedinUrl: string | null;
+      phone?: string | null;
       firstName: string;
       lastName: string | null;
       companyId: string;
@@ -59,11 +60,18 @@ export interface SuppressionStore {
  * Check if a value is in the global suppression list.
  * Returns true if the value should be suppressed.
  */
+/** Digits only, so "+44 7700 900123" and "447700900123" match; null if too short to be a phone. */
+export function normalizePhone(phone?: string | null): string | null {
+  const digits = (phone ?? '').replace(/\D/g, '');
+  return digits.length >= 8 ? digits : null;
+}
+
 export async function isSuppressed(
   store: SuppressionStore,
   email?: string | null,
   domain?: string | null,
   linkedinUrl?: string | null,
+  phone?: string | null,
 ): Promise<boolean> {
   const checks: Array<{ suppressionType: SuppressionType; value: string }> = [];
 
@@ -80,6 +88,10 @@ export async function isSuppressed(
   }
   if (linkedinUrl?.trim()) {
     checks.push({ suppressionType: 'LINKEDIN_URL' as SuppressionType, value: linkedinUrl.trim().toLowerCase() });
+  }
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone) {
+    checks.push({ suppressionType: 'PHONE' as SuppressionType, value: normalizedPhone });
   }
 
   for (const check of checks) {
@@ -116,8 +128,8 @@ export async function addToSuppressionList(
     isAutomatic?: boolean;
   },
 ): Promise<{ id: string; alreadyExisted: boolean }> {
-  const normalizedValue = params.suppressionType === 'EMAIL' || params.suppressionType === 'DOMAIN'
-    ? params.value.trim().toLowerCase()
+  const normalizedValue = params.suppressionType === 'PHONE'
+    ? (normalizePhone(params.value) ?? params.value.trim())
     : params.value.trim().toLowerCase();
 
   try {
@@ -218,6 +230,7 @@ export async function unsubscribeLead(
       id: true as const,
       email: true as const,
       linkedinUrl: true as const,
+      phone: true as const,
       firstName: true as const,
       lastName: true as const,
       companyId: true as const,
@@ -274,6 +287,17 @@ export async function unsubscribeLead(
     result.linkedinSuppressed = !linkedinResult.alreadyExisted;
   }
 
+  // 3b. Phone (WhatsApp) — person-level, always included
+  if (normalizePhone(lead.phone)) {
+    await addToSuppressionList(store, {
+      suppressionType: 'PHONE' as SuppressionType,
+      value: lead.phone!,
+      reason: `Automatic phone opt-out from lead ${leadId}`,
+      leadId,
+      isAutomatic: true,
+    });
+  }
+
   result.suppressionAdded = result.emailSuppressed || result.domainSuppressed || result.linkedinSuppressed;
 
   // 4. Mark lead as UNSUBSCRIBED
@@ -328,13 +352,14 @@ export async function unsubscribeLead(
  */
 export async function shouldBlockLead(
   store: SuppressionStore,
-  lead: { id: string; email?: string | null; linkedinUrl?: string | null; company?: { domain?: string | null } | null },
+  lead: { id: string; email?: string | null; linkedinUrl?: string | null; phone?: string | null; company?: { domain?: string | null } | null },
 ): Promise<{ blocked: boolean; reason?: string }> {
   const suppressed = await isSuppressed(
     store,
     lead.email,
     lead.company?.domain,
     lead.linkedinUrl,
+    lead.phone,
   );
 
   if (suppressed) {
@@ -351,4 +376,5 @@ export const SUPPRESSION_TYPE_LABELS_PT_BR: Record<string, string> = {
   EMAIL: 'E-mail',
   DOMAIN: 'Domínio',
   LINKEDIN_URL: 'URL do LinkedIn',
+  PHONE: 'Telefone',
 };
