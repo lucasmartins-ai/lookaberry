@@ -386,6 +386,16 @@ describe('IP Filter Plugin (integration with Fastify)', () => {
       expect(body.message).toContain('Admin');
     });
 
+    it('blocks a percent-encoded admin path too (no raw-URL bypass)', async () => {
+      const res = await inject(app, {
+        method: 'GET',
+        path: '/api/v1/%61dmin/api-keys',
+        headers: { authorization: 'Bearer sk_test_abc123' },
+        remoteAddress: '203.0.113.99',
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
     it('non-admin IP can still access non-admin routes', async () => {
       const res = await inject(app, {
         method: 'GET',

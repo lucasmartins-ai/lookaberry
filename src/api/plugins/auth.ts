@@ -4,6 +4,7 @@ import { config } from '../../config/env.js';
 import { prisma } from '../../db/client.js';
 import { hashApiKey, type ApiKeyRecord } from '../../core/security/apiKeys.js';
 import { validateRequestTotp } from '../../core/security/totp.js';
+import { routePath } from './routePath.js';
 
 const EXEMPT_PREFIXES = ['/health', '/docs', '/api/v1/email/track'];
 const WEBHOOK_ROUTE = '/api/v1/webhooks/outreach';
@@ -15,22 +16,6 @@ const ADMIN_PREFIX = '/api/v1/admin';
  * (/sse + /messages: MCP tools such as record_feedback can trigger an opt-out cascade.)
  */
 const TOTP_PREFIXES = [ADMIN_PREFIX, '/api/v1/events', '/sse', '/messages'];
-
-/**
- * The path the router actually matched: the registered route pattern when there is one,
- * else the percent-decoded path. Checking the raw URL let "/api/v1/%65vents" reach the
- * events route while dodging prefix checks.
- */
-function routePath(request: FastifyRequest): string {
-  const pattern = request.routeOptions?.url;
-  if (pattern) return pattern;
-  const raw = request.url.split('?')[0];
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
-}
 
 function isTotpProtected(path: string): boolean {
   return TOTP_PREFIXES.some(p => path === p || path.startsWith(p + '/'));

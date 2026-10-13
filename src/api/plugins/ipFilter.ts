@@ -21,6 +21,7 @@
  */
 
 import fp from 'fastify-plugin';
+import { routePath } from './routePath.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config/env.js';
 
@@ -223,7 +224,7 @@ export default fp(
       if (process.env.NODE_ENV === 'test') return;
 
       const url = request.url;
-      const path = url.split('?')[0];
+      const path = routePath(request);
 
       // Exempt routes always pass (liveness probes, trackers)
       if (IP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(p + '/'))) {

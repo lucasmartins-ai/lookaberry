@@ -1,4 +1,5 @@
 import fp from 'fastify-plugin';
+import { routePath } from './routePath.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Redis } from 'ioredis';
 import { config } from '../../config/env.js';
@@ -199,7 +200,7 @@ export { _resetMemoryStore };
 export default fp(
   async function rateLimit(app: FastifyInstance) {
     app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-      const url = request.url;
+      const url = routePath(request);
 
       if (isExemptRoute(url)) return;
 

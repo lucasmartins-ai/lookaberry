@@ -2,6 +2,7 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import crypto from 'node:crypto';
 import { config } from '../../config/env.js';
+import { routePath } from './routePath.js';
 
 const WEBHOOK_ROUTE = '/api/v1/webhooks/outreach';
 const RESEND_WEBHOOK_ROUTE = '/api/v1/email/webhooks/resend';
@@ -9,10 +10,6 @@ const WHATSAPP_WEBHOOK_ROUTE = '/api/v1/webhooks/whatsapp';
 const WEBHOOK_ROUTES = [WEBHOOK_ROUTE, RESEND_WEBHOOK_ROUTE, WHATSAPP_WEBHOOK_ROUTE];
 const TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 
-/** Matched route pattern (never includes the query string), so `?x=1` can't dodge signature checks. */
-function routeOf(request: FastifyRequest): string {
-  return request.routeOptions?.url ?? request.url.split('?')[0];
-}
 
 function computeHmac(payload: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
@@ -31,7 +28,7 @@ async function validateWebhookSignature(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (routeOf(request) !== WEBHOOK_ROUTE) return;
+  if (routePath(request) !== WEBHOOK_ROUTE) return;
 
   // Dev/test: skip if WEBHOOK_SECRET not configured
   const secret = process.env.WEBHOOK_SECRET ?? config.WEBHOOK_SECRET;
@@ -106,7 +103,7 @@ export async function validateSvixSignature(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (routeOf(request) !== RESEND_WEBHOOK_ROUTE) return;
+  if (routePath(request) !== RESEND_WEBHOOK_ROUTE) return;
 
   // Dev/test: skip if RESEND_WEBHOOK_SECRET not configured
   const secret = process.env.RESEND_WEBHOOK_SECRET ?? config.RESEND_WEBHOOK_SECRET;
@@ -173,8 +170,7 @@ export async function validateWhatsAppSignature(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  // request.url may include query string — strip for route matching
-  const path = request.url.split('?')[0];
+  const path = routePath(request);
   if (path !== WHATSAPP_WEBHOOK_ROUTE) return;
   if (request.method !== 'POST') return;
 
@@ -212,8 +208,7 @@ export async function handleWhatsAppVerification(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  // request.url includes query string — strip for route matching
-  const path = request.url.split('?')[0];
+  const path = routePath(request);
   if (path !== WHATSAPP_WEBHOOK_ROUTE) return;
   if (request.method !== 'GET') return;
 
@@ -236,7 +231,7 @@ export default fp(
   async function webhookAuth(app: FastifyInstance) {
     // Capture raw body for webhook routes BEFORE Fastify parses them
     app.addHook('preParsing', async (request, _reply, payload) => {
-      if (WEBHOOK_ROUTES.includes(routeOf(request)) && payload) {
+      if (WEBHOOK_ROUTES.includes(routePath(request)) && payload) {
         const chunks: Buffer[] = [];
         for await (const chunk of payload) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -260,7 +255,7 @@ export default fp(
     // Validate signature in preHandler (after body is parsed)
     app.addHook('preHandler', async (request, reply) => {
       if (request.method !== 'POST') return;
-      const route = routeOf(request);
+      const route = routePath(request);
       if (route === WEBHOOK_ROUTE) {
         await validateWebhookSignature(request, reply);
       }

@@ -1,4 +1,5 @@
 import fp from 'fastify-plugin';
+import { routePath } from './routePath.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Redis } from 'ioredis';
 import { registerRedisRecovery } from '../../core/queues/helpers.js';
@@ -40,7 +41,7 @@ async function checkIdempotency(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (request.url !== WEBHOOK_ROUTE || request.method !== 'POST') return;
+  if (routePath(request) !== WEBHOOK_ROUTE || request.method !== 'POST') return;
 
   const idempotencyKey = request.headers['idempotency-key'];
   if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0) {
@@ -102,7 +103,7 @@ async function storeResult(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  if (request.url !== WEBHOOK_ROUTE || request.method !== 'POST') return;
+  if (routePath(request) !== WEBHOOK_ROUTE || request.method !== 'POST') return;
 
   const idempotencyKey = request.headers['idempotency-key'];
   if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0) return;
