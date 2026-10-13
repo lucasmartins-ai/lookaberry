@@ -226,7 +226,9 @@ cp .env.example .env
 ```bash
 docker compose up -d
 ```
-> Host ports and restart policy are configurable via `.env`: `PG_HOST_PORT` (default `5433`), `REDIS_HOST_PORT` (default `6379`), `COMPOSE_RESTART` (default `always`). Update `DATABASE_URL`/`REDIS_URL` if you change them.
+> Host ports and restart policy are configurable via `.env`: `PG_HOST_PORT` (default `5433`), `REDIS_HOST_PORT` (default `6379`), `COMPOSE_RESTART` (default `always`), `POSTGRES_PASSWORD`, and `BIND_ADDR` (default `127.0.0.1` — ports are not exposed to the network). Update `DATABASE_URL`/`REDIS_URL` if you change them.
+>
+> Behind a reverse proxy, set `TRUST_PROXY` (proxy IPs/CIDRs, hop count, or `true`) so IP filtering and rate limits see the real client IP; by default `X-Forwarded-For` is ignored.
 
 ### 5. Push Prisma Schema & Run Seed
 ```bash

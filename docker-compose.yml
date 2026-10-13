@@ -7,10 +7,10 @@ services:
     restart: ${COMPOSE_RESTART:-always}
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: lookaberry
     ports:
-      - "${PG_HOST_PORT:-5433}:5432"
+      - "${BIND_ADDR:-127.0.0.1}:${PG_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +24,7 @@ services:
     container_name: lookaberry-redis
     restart: ${COMPOSE_RESTART:-always}
     ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
+      - "${BIND_ADDR:-127.0.0.1}:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
