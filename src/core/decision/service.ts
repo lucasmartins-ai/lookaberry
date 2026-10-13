@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { evaluate } from './engine.js';
+import { HASH_EMBEDDING_MODEL } from '../icp/embeddings.js';
 import type { DecisionContext, EvaluateOpportunityInput, EvaluateOpportunityOutput, NormalizedDecisionSignal, DecisionEvidence } from './types.js';
 
 function signalRowToDecisionSignal(row: {
@@ -135,12 +136,19 @@ export class DecisionService {
     return rows.map(evidenceRowToDecisionEvidence);
   }
 
+  /**
+   * Cosine similarity only when both vectors come from the same semantic model; otherwise fall back
+   * to the explicit companies.icp_fit_score (0-100). Comparing hash or mixed-model vectors is noise.
+   */
   private async fetchIcpFit(companyId: string, icpId: string): Promise<number> {
     const rows = await prisma.$queryRaw<Array<{ icp_fit: number }>>(Prisma.sql`
       SELECT
         ROUND((CASE
-          WHEN c.embedding IS NULL OR p.embedding IS NULL THEN 0
-          ELSE GREATEST(0, LEAST(100, (1 - (c.embedding <=> p.embedding)) * 100))
+          WHEN c.embedding IS NOT NULL AND p.embedding IS NOT NULL
+               AND c.embedding_model = p.embedding_model
+               AND c.embedding_model <> ${HASH_EMBEDDING_MODEL}
+            THEN GREATEST(0, LEAST(100, (1 - (c.embedding <=> p.embedding)) * 100))
+          ELSE COALESCE(c.icp_fit_score, 0)
         END)::numeric, 2)::float / 100.0 AS icp_fit
       FROM companies c
       CROSS JOIN icp_profiles p
@@ -158,7 +166,7 @@ export class DecisionService {
   ): Promise<DecisionContext | null> {
     const lead = await prisma.lead.findUnique({
       where: { id: leadId },
-      select: { id: true, companyId: true, title: true, seniority: true, company: { select: { name: true } } },
+      select: { id: true, companyId: true, firstName: true, title: true, seniority: true, company: { select: { name: true } } },
     });
 
     if (!lead) throw new Error(`Lead not found: ${leadId}`);
@@ -174,6 +182,7 @@ export class DecisionService {
       companyId: lead.companyId,
       companyName: lead.company.name,
       icpFit,
+      leadFirstName: lead.firstName ?? undefined,
       leadTitle: lead.title,
       leadSeniority: lead.seniority ?? undefined,
       signals,
@@ -216,7 +225,7 @@ export class DecisionService {
   ): Promise<DecisionContext[]> {
     const leads = await prisma.lead.findMany({
       where: { status: { in: ['DISCOVERED', 'ENRICHED', 'READY'] } },
-      select: { id: true, companyId: true, title: true, seniority: true, company: { select: { name: true, id: true } } },
+      select: { id: true, companyId: true, firstName: true, title: true, seniority: true, company: { select: { name: true, id: true } } },
       take: 50,
     });
 
@@ -234,6 +243,7 @@ export class DecisionService {
           companyId: lead.companyId,
           companyName: lead.company.name,
           icpFit,
+          leadFirstName: lead.firstName ?? undefined,
           leadTitle: lead.title,
           leadSeniority: lead.seniority ?? undefined,
           signals,

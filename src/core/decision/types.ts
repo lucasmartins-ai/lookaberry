@@ -67,6 +67,8 @@ export interface DecisionContext {
   companyName: string;
   /** ICP fit score 0–1 */
   icpFit: number;
+  /** Lead first name, if available (used in message templates) */
+  leadFirstName?: string;
   /** Lead title, if available */
   leadTitle?: string;
   /** Lead seniority, if available */

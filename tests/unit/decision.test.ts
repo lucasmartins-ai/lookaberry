@@ -263,7 +263,7 @@ describe('Decision engine — unit', () => {
     });
 
     it('interpolates firstName, companyName, and signalTitle in templates', () => {
-      const actions = buildRecommendedActions([activeSignal()], 'Acme Corp', 'Alice Johnson', NOW);
+      const actions = buildRecommendedActions([activeSignal()], 'Acme Corp', 'Alice', NOW);
       const msg = actions.find(a => a.channel === 'linkedin' && a.capability === 'sendMessage');
       expect(msg?.template).toContain('Alice');
       expect(msg?.template).toContain('Acme Corp');
@@ -271,14 +271,22 @@ describe('Decision engine — unit', () => {
     });
 
     it('falls back to default actions when no signals are active', () => {
-      const actions = buildRecommendedActions([], 'Acme Corp', 'Some Person', NOW);
+      const actions = buildRecommendedActions([], 'Acme Corp', 'Some', NOW);
       expect(actions[0].channel).toBe('linkedin');
       expect(actions[0].capability).toBe('connect');
-      expect(actions[0].template).toContain('Some'); // first name extraction
+      expect(actions[0].template).toContain('Some');
       expect(actions[0].template).toContain('Acme Corp');
       expect(actions[1].channel).toBe('manual');
       expect(actions[1].capability).toBe('followUp');
       expect(actions[1].template).toContain('Acme Corp');
+    });
+
+    it('greets with the first name, never with the job title', () => {
+      const [withName] = buildRecommendedActions([activeSignal()], 'Acme Corp', 'Ana', NOW).filter(a => a.template.includes('Hi'));
+      expect(withName?.template).toContain('Hi Ana');
+      const [noName] = buildRecommendedActions([activeSignal()], 'Acme Corp', undefined, NOW).filter(a => a.template.includes('Hi'));
+      expect(noName?.template).toContain('Hi there');
+      expect(noName?.template).not.toContain('Hi VP');
     });
 
     it('filters out actions whose channel does not support the required capability', () => {

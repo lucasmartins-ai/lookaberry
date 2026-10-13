@@ -317,12 +317,13 @@ export function buildWhyNow(signals: NormalizedDecisionSignal[], now: Date): str
 export function buildRecommendedActions(
   signals: NormalizedDecisionSignal[],
   companyName: string,
-  leadTitle: string | undefined,
+  leadFirstName: string | undefined,
   now: Date,
 ): RecommendedAction[] {
+  // The lead's real first name (never derived from the job title — that produced "Hi VP,").
+  const firstName = leadFirstName?.trim() || 'there';
   const active = signals.filter(s => isActiveSignal(s, now));
   if (active.length === 0) {
-    const firstName = leadTitle?.split(' ')[0] ?? 'there';
     return DEFAULT_ACTIONS.map(action => ({
       ...action,
       template: action.template
@@ -349,7 +350,6 @@ export function buildRecommendedActions(
 
       seenKeys.add(key);
 
-      const firstName = leadTitle?.split(' ')[0] ?? 'there';
       const template = tpl.template
         .replace(/\{firstName\}/g, firstName)
         .replace(/\{companyName\}/g, companyName)
@@ -408,7 +408,7 @@ export function evaluate(ctx: DecisionContext, now: Date = new Date()): Opportun
   const urgency = classifyUrgency(latestAge, maxWeight, bestClassification);
   const factors = buildDecisionFactors(ctx, signalScore, evidenceStrength, leadMatchScore, now);
   const whyNow = buildWhyNow(ctx.signals, now);
-  const recommendedActions = buildRecommendedActions(ctx.signals, ctx.companyName, ctx.leadTitle, now);
+  const recommendedActions = buildRecommendedActions(ctx.signals, ctx.companyName, ctx.leadFirstName, now);
 
   const topSignalTypes = [...new Set(activeSignals.map(s => s.signalType))];
 
