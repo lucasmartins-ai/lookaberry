@@ -693,6 +693,15 @@ describe('S15 Suppression List', () => {
       const store = makeSuppressionStore();
       await expect(unsubscribeLead(store, 'no-such-lead')).rejects.toThrow('Lead not found');
     });
+
+    it('person-level opt-out (from a reply) never suppresses the whole domain', async () => {
+      const store = makeSuppressionStore();
+      const result = await unsubscribeLead(store, 'lead-1', 'reply-classifier', { includeDomain: false });
+      expect(result.emailSuppressed).toBe(true);
+      expect(result.domainSuppressed).toBe(false);
+      const types = (store.globalSuppressionList.create as any).mock.calls.map((c: any) => c[0].data.suppressionType);
+      expect(types).not.toContain('DOMAIN');
+    });
   });
 });
 

@@ -208,6 +208,8 @@ export async function unsubscribeLead(
   store: SuppressionStore,
   leadId: string,
   actor?: string,
+  /** includeDomain=false for person-level opt-outs (e.g. a reply): a domain entry would also block colleagues or every gmail.com lead. */
+  options: { includeDomain?: boolean } = {},
 ): Promise<UnsubscribeResult> {
   // Fetch the lead data
   const lead = await store.lead.findUnique({
@@ -249,7 +251,7 @@ export async function unsubscribeLead(
 
   // 2. Add domain to suppression
   const domain = lead.email?.split('@')[1]?.toLowerCase() ?? lead.company?.domain?.toLowerCase();
-  if (domain?.trim()) {
+  if (options.includeDomain !== false && domain?.trim()) {
     const domainResult = await addToSuppressionList(store, {
       suppressionType: 'DOMAIN' as SuppressionType,
       value: domain.trim(),

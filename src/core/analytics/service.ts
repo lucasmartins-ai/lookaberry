@@ -86,8 +86,11 @@ const prismaRepository: AnalyticsRepository = {
         const status = input.interaction_type === 'OPEN' ? 'OPENED' : input.interaction_type === 'CLICK' ? 'CLICKED' : input.interaction_type === 'REPLY' ? 'REPLIED' : 'BOUNCED';
         const before = await tx.outreachMessage.findUnique({
           where: { id: input.message_id },
-          select: { stepId: true, openedAt: true, clickedAt: true, repliedAt: true },
+          select: { leadId: true, stepId: true, openedAt: true, clickedAt: true, repliedAt: true },
         });
+        if (before && before.leadId !== input.lead_id) {
+          throw new Error(`Message ${input.message_id} does not belong to lead ${input.lead_id}`);
+        }
         const message = await tx.outreachMessage.update({
           where: { id: input.message_id },
           data: {
@@ -119,9 +122,10 @@ const prismaRepository: AnalyticsRepository = {
       if (input.interaction_type === 'BOUNCE') await tx.lead.update({ where: { id: input.lead_id }, data: { status: 'BOUNCED' } });
       return feedback;
     });
-    // Opt-out by reply: cascade into the global suppression list (email, domain, LinkedIn) across campaigns.
-    if (input.interaction_type === 'REPLY' && sentiment.intent === 'UNSUBSCRIBE') {
-      await unsubscribeLead(prisma as any, input.lead_id, 'reply-classifier').catch(err =>
+    // Any negative reply (opt-out or refusal) stops all future contact with this person across campaigns.
+    // Person-level only: the reply author's email/LinkedIn, never their whole domain.
+    if (input.interaction_type === 'REPLY' && (sentiment.intent === 'UNSUBSCRIBE' || sentiment.sentiment === 'NEGATIVE')) {
+      await unsubscribeLead(prisma as any, input.lead_id, 'reply-classifier', { includeDomain: false }).catch(err =>
         console.warn('[Analytics] unsubscribe cascade failed:', err instanceof Error ? err.message : String(err)));
     }
     return { feedbackId: feedback.id, requiresHumanReview: review };

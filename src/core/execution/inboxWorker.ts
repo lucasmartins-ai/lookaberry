@@ -285,8 +285,8 @@ export async function processReply(
   if (sentiment.sentiment === 'POSITIVE') {
     leadStatus = 'REPLIED_POSITIVE';
   } else if (sentiment.sentiment === 'NEGATIVE') {
-    // Only an explicit opt-out unsubscribes; a plain "no" is a negative reply (same rule as analytics).
-    leadStatus = classifyReplyHeuristic(params.replyContent).intent === 'UNSUBSCRIBE' ? 'UNSUBSCRIBED' : 'REPLIED_NEGATIVE';
+    // Conservative: any negative reply is treated as an opt-out (same rule as analytics).
+    leadStatus = 'UNSUBSCRIBED';
   } else {
     leadStatus = 'ENGAGED';
   }
