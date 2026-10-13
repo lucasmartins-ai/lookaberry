@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { config } from '../../config/env.js';
+import { jevEvaluate, isJevEnabled } from '../intelligence/typesafe.js';
 
 export interface PersonaAnalysis {
   title: string;
@@ -26,6 +27,15 @@ export interface IcpAnalysisResult {
   company_size_min: number;
   company_size_max: number;
   tech_stack_keywords: string[];
+  /** Jev pre-analysis metadata (TypeSafe integration). */
+  jev_meta?: {
+    provider: 'typesafe-jev' | 'unavailable';
+    sufficient_prob: number;
+    industry_family: string;
+    b2b_prob: number;
+    reduced_chars: number;
+    llm_skipped: boolean;
+  };
 }
 
 const SYSTEM_PROMPT = `You are an elite B2B Go-To-Market (GTM) Strategist. 
@@ -127,17 +137,112 @@ function heuristicAnalysis(markdown: string, url: string, description?: string):
   };
 }
 
+/** Deterministic reducer: strip boilerplate blocks and cap size before any LLM sees the page. */
+export function reduceContent(markdown: string, maxChars = 2600): string {
+  const cleaned = markdown
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 2 && !/^(cookie|accept|privacy|terms|subscribe|menu|home|blog|login|sign in)$/i.test(l))
+    .join('\n')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+  return cleaned.slice(0, maxChars);
+}
+
+interface JevIcpAssessment {
+  provider: 'typesafe-jev' | 'unavailable';
+  sufficient: boolean;
+  sufficientProb: number;
+  industryFamily: string;
+  b2bFocus: number;
+  reduced: string;
+}
+
+/** One Jev call: is the page worth an LLM pass, and what family of business is this? */
+async function jevAssessIcp(markdown: string, websiteUrl: string, description?: string): Promise<JevIcpAssessment> {
+  const reduced = reduceContent(markdown);
+  if (!isJevEnabled()) {
+    return { provider: 'unavailable', sufficient: true, sufficientProb: -1, industryFamily: 'unknown', b2bFocus: -1, reduced };
+  }
+  const out = await jevEvaluate({
+    feature: 'lookaberry_icp',
+    state: { website: websiteUrl, description: description ?? 'none', content: reduced },
+    questions: {
+      content_sufficient: {
+        type: 'noul',
+        instructions:
+          'Is there enough substantive (non-boilerplate) website content here to extract an ICP: clearly what the company does and who it serves?',
+        criteria: {
+          true: 'Clear offer and audience present',
+          false: 'Mostly boilerplate, cookie/login walls, or near-empty',
+        },
+      },
+      industry_family: {
+        type: 'choice',
+        instructions: 'Which industry family fits this company best?',
+        criteria: {
+          'B2B SaaS': 'Software sold as a subscription to businesses',
+          'Enterprise Software': 'On-prem or enterprise software vendors',
+          Technology: 'IT services, dev shops, agencies',
+          'Financial Services': 'Fintech, banking, insurance, accounting',
+          Healthcare: 'Clinics, healthtech, medical services',
+          'E-commerce': 'Online retail or marketplaces',
+          'Professional Services': 'Consulting, legal, marketing agencies',
+          Other: 'Anything else',
+        },
+      },
+      b2b_focus: {
+        type: 'noul',
+        instructions: 'Does this company sell primarily to businesses (B2B) rather than consumers?',
+        criteria: { true: 'B2B', false: 'B2C or mixed' },
+      },
+    },
+  });
+  if (!out) {
+    return { provider: 'unavailable', sufficient: true, sufficientProb: -1, industryFamily: 'unknown', b2bFocus: -1, reduced };
+  }
+  const a = out.answers as Record<string, any>;
+  return {
+    provider: 'typesafe-jev',
+    sufficient: (a.content_sufficient?.noul ?? 1) > 0.35,
+    sufficientProb: a.content_sufficient?.noul ?? -1,
+    industryFamily: a.industry_family?.choice ?? 'unknown',
+    b2bFocus: a.b2b_focus?.noul ?? -1,
+    reduced,
+  };
+}
+
 export async function analyzeIcpContent(
   markdown: string,
   websiteUrl: string,
   description?: string,
   targetGeos?: string[]
 ): Promise<IcpAnalysisResult> {
-  const contentSnippet = markdown.slice(0, 8000);
+  // 0. Jev pre-analysis: reduce state + decide whether the LLM call is worth it.
+  const assessment = await jevAssessIcp(markdown, websiteUrl, description);
+  const meta = {
+    provider: assessment.provider,
+    sufficient_prob: assessment.sufficientProb,
+    industry_family: assessment.industryFamily,
+    b2b_prob: assessment.b2bFocus,
+    reduced_chars: assessment.reduced.length,
+    llm_skipped: false,
+  };
+  if (assessment.provider === 'typesafe-jev' && !assessment.sufficient) {
+    return { ...heuristicAnalysis(markdown, websiteUrl, description), jev_meta: { ...meta, llm_skipped: true } };
+  }
+
+  const contentSnippet = assessment.reduced || markdown.slice(0, 8000);
+  const jevHint =
+    assessment.provider === 'typesafe-jev'
+      ? `\nJev pre-analysis: industry family "${assessment.industryFamily}", B2B probability ${assessment.b2bFocus.toFixed(2)}. Use this to inform target_personas and target_industries.`
+      : '';
   const userPrompt = `Analyze this company website content and extract the ICP:
 URL: ${websiteUrl}
 Additional Context/Description: ${description || 'None provided'}
-Target Geos: ${targetGeos ? targetGeos.join(', ') : 'Global / Any'}
+Target Geos: ${targetGeos ? targetGeos.join(', ') : 'Global / Any'}${jevHint}
 
 WEBSITE CONTENT:
 ${contentSnippet}`;
@@ -159,7 +264,7 @@ ${contentSnippet}`;
         const jsonMatch = textBlock.text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]) as IcpAnalysisResult;
-          return normalizeAnalysisResult(parsed, websiteUrl, description);
+          return { ...normalizeAnalysisResult(parsed, websiteUrl, description), jev_meta: meta };
         }
       }
     } catch (err: any) {
@@ -184,7 +289,7 @@ ${contentSnippet}`;
       const content = completion.choices[0]?.message?.content;
       if (content) {
         const parsed = JSON.parse(content) as IcpAnalysisResult;
-        return normalizeAnalysisResult(parsed, websiteUrl, description);
+        return { ...normalizeAnalysisResult(parsed, websiteUrl, description), jev_meta: meta };
       }
     } catch (err: any) {
       console.warn(`OpenAI ICP analysis failed: ${err.message}. Using heuristic fallback...`);
@@ -192,7 +297,7 @@ ${contentSnippet}`;
   }
 
   // 3. Fallback Heuristic
-  return heuristicAnalysis(markdown, websiteUrl, description);
+  return { ...heuristicAnalysis(markdown, websiteUrl, description), jev_meta: meta };
 }
 
 function normalizeAnalysisResult(raw: Partial<IcpAnalysisResult>, url: string, description?: string): IcpAnalysisResult {
