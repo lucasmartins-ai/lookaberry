@@ -211,7 +211,7 @@ npm run test:beta
 
 ### 2. Install Dependencies
 ```bash
-git clone https://github.com/vetlucasmartins/lookaberry.git
+git clone https://github.com/lucasmartins-ai/lookaberry.git
 cd lookaberry
 npm install
 ```
@@ -226,6 +226,7 @@ cp .env.example .env
 ```bash
 docker compose up -d
 ```
+> Host ports and restart policy are configurable via `.env`: `PG_HOST_PORT` (default `5433`), `REDIS_HOST_PORT` (default `6379`), `COMPOSE_RESTART` (default `always`). Update `DATABASE_URL`/`REDIS_URL` if you change them.
 
 ### 5. Push Prisma Schema & Run Seed
 ```bash
