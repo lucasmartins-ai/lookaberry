@@ -389,18 +389,53 @@ export async function regenerateBackupCodes(
  * Returns true if the provided code is valid (TOTP or backup).
  * Also consumes the backup code if one was used.
  */
+// ponytail: in-memory, per-process guards. Move to Redis if the API runs on more than one instance.
+const TOTP_MAX_FAILURES = 5;
+const TOTP_LOCK_MS = 15 * 60_000;
+const TOTP_CODE_TTL_MS = 3 * STEP_SECONDS * 1000; // current ± 1 step
+const totpFailures = new Map<string, { count: number; until: number }>();
+const usedTotpCodes = new Map<string, number>(); // `${apiKeyId}:${code}` -> expiry
+
+function recordTotpFailure(apiKeyId: string, now: number): void {
+  const prev = totpFailures.get(apiKeyId);
+  const count = prev && prev.until > now ? prev.count + 1 : 1;
+  totpFailures.set(apiKeyId, { count, until: now + TOTP_LOCK_MS });
+}
+
+/** Clear brute-force/replay state (tests only). */
+export function _resetTotpGuards(): void {
+  totpFailures.clear();
+  usedTotpCodes.clear();
+}
+
 export async function validateRequestTotp(
   store: TotpStore,
   apiKeyId: string,
   code: string,
 ): Promise<boolean> {
+  const now = Date.now();
+  const failures = totpFailures.get(apiKeyId);
+  if (failures && failures.until > now && failures.count >= TOTP_MAX_FAILURES) return false;
+
   const record = await store.totpSecret.findUnique({ where: { apiKeyId } });
   if (!record || !record.enabled) return false;
 
   const secretB32 = decryptSecret(record.encryptedSecret);
 
-  // Try TOTP first (fast, no state change)
-  if (verifyTotp(secretB32, code)) return true;
+  // TOTP codes are single-use: a code seen once is rejected for the rest of its validity window.
+  if (verifyTotp(secretB32, code)) {
+    const usedKey = `${apiKeyId}:${code}`;
+    if ((usedTotpCodes.get(usedKey) ?? 0) > now) {
+      recordTotpFailure(apiKeyId, now);
+      return false;
+    }
+    if (usedTotpCodes.size > 10_000) {
+      for (const [k, exp] of usedTotpCodes) if (exp <= now) usedTotpCodes.delete(k);
+    }
+    usedTotpCodes.set(usedKey, now + TOTP_CODE_TTL_MS);
+    totpFailures.delete(apiKeyId);
+    return true;
+  }
 
   // Try backup code (consumes it on success)
   const result = verifyBackupCode(record.backupCodesHashed, code);
@@ -410,9 +445,11 @@ export async function validateRequestTotp(
       create: { apiKeyId, encryptedSecret: record.encryptedSecret, enabled: true, backupCodesHashed: result.remaining, backupCodeCount: result.remaining.length },
       update: { backupCodesHashed: result.remaining, backupCodeCount: result.remaining.length },
     });
+    totpFailures.delete(apiKeyId);
     return true;
   }
 
+  recordTotpFailure(apiKeyId, now);
   return false;
 }
 

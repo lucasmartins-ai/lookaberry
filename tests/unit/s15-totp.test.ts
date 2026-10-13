@@ -25,6 +25,7 @@ import {
   disableTotp,
   regenerateBackupCodes,
   validateRequestTotp,
+  _resetTotpGuards,
   base32Encode,
   base32Decode,
   encryptSecret,
@@ -360,6 +361,34 @@ describe('TOTP lifecycle', () => {
     it('returns false when not enabled', async () => {
       const result = await validateRequestTotp(store, 'no-key', '123456');
       expect(result).toBe(false);
+    });
+
+    function enableKey(id: string): string {
+      const { secretB32 } = generateTotpSecret('k');
+      store._secrets.set(id, {
+        apiKeyId: id,
+        encryptedSecret: encryptSecret(secretB32),
+        enabled: true,
+        backupCodesHashed: [],
+        backupCodeCount: 0,
+      });
+      return hotp(secretB32, BigInt(Math.floor(Date.now() / 1000 / 30)));
+    }
+
+    it('rejects a replayed TOTP code', async () => {
+      _resetTotpGuards();
+      const code = enableKey('key-replay');
+      expect(await validateRequestTotp(store, 'key-replay', code)).toBe(true);
+      expect(await validateRequestTotp(store, 'key-replay', code)).toBe(false);
+    });
+
+    it('locks the key after 5 failed attempts, even for a valid code', async () => {
+      _resetTotpGuards();
+      const code = enableKey('key-brute');
+      for (let i = 0; i < 5; i++) {
+        expect(await validateRequestTotp(store, 'key-brute', '000000')).toBe(false);
+      }
+      expect(await validateRequestTotp(store, 'key-brute', code)).toBe(false);
     });
 
     it('consumes backup code on success', async () => {
