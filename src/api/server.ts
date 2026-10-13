@@ -22,7 +22,11 @@ import { campaignRoutes } from '../api/routes/campaigns.js';
 import { adminRoutes } from '../api/routes/admin.js';
 
 export async function buildServer(): Promise<FastifyInstance> {
+  // request.ip only honours X-Forwarded-For from proxies listed in TRUST_PROXY
+  const tp = (process.env.TRUST_PROXY ?? config.TRUST_PROXY).trim();
+  const trustProxy: boolean | number | string = tp === '' ? false : tp === 'true' ? true : /^\d+$/.test(tp) ? Number(tp) : tp;
   const app = fastify({
+    trustProxy: trustProxy as string,
     logger: {
       level: process.env.NODE_ENV === 'test' ? 'error' : 'info',
     },

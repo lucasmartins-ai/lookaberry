@@ -17,9 +17,7 @@
  * IPs should be added to the allowlist in production.
  *
  * The real client IP is determined from:
- *   1. `X-Forwarded-For` header (first entry, trust from reverse proxy)
- *   2. `X-Real-IP` header
- *   3. `request.ip` (Fastify built-in)
+ *   `request.ip` (X-Forwarded-For only via a trusted proxy, see TRUST_PROXY)
  */
 
 import fp from 'fastify-plugin';
@@ -174,23 +172,10 @@ function normalizeIp(ip: string): string {
 // ──────────────────────────────── Client IP Resolution ────────────────────────────────
 
 /**
- * Extract the real client IP from request headers.
- * Trusts X-Forwarded-For from a properly configured reverse proxy.
+ * Client IP as resolved by Fastify. X-Forwarded-For is honoured only when the
+ * request came through a proxy listed in TRUST_PROXY — never from raw headers.
  */
 function getClientIp(request: FastifyRequest): string {
-  // 1. X-Forwarded-For (first entry is the original client)
-  const xff = request.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.length > 0) {
-    return xff.split(',')[0].trim();
-  }
-
-  // 2. X-Real-IP
-  const xri = request.headers['x-real-ip'];
-  if (typeof xri === 'string' && xri.length > 0) {
-    return xri.trim();
-  }
-
-  // 3. Fastify built-in
   return request.ip;
 }
 

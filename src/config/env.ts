@@ -8,6 +8,8 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   PORT: z.coerce.number().default(3000),
   HOST: z.string().default('0.0.0.0'),
+  // '' = ignore X-Forwarded-For; 'true' = trust any proxy; '1' = hop count; or comma-separated proxy IPs/CIDRs
+  TRUST_PROXY: z.string().default(''),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   ANTHROPIC_API_KEY: z.string().optional().default(''),
   ANTHROPIC_MODEL: z.string().default('claude-3-5-haiku-latest'),

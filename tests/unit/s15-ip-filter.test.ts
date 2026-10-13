@@ -164,20 +164,12 @@ describe('IP matching primitives', () => {
   });
 
   describe('getClientIp', () => {
-    it('prefers X-Forwarded-For', () => {
+    it('ignores spoofable X-Forwarded-For / X-Real-IP headers', () => {
       const req = {
-        headers: { 'x-forwarded-for': '203.0.113.1, 10.0.0.1' },
+        headers: { 'x-forwarded-for': '203.0.113.1, 10.0.0.1', 'x-real-ip': '198.51.100.42' },
         ip: '127.0.0.1',
       } as any;
-      expect(getClientIp(req)).toBe('203.0.113.1');
-    });
-
-    it('falls back to X-Real-IP', () => {
-      const req = {
-        headers: { 'x-real-ip': '198.51.100.42' },
-        ip: '127.0.0.1',
-      } as any;
-      expect(getClientIp(req)).toBe('198.51.100.42');
+      expect(getClientIp(req)).toBe('127.0.0.1');
     });
 
     it('falls back to request.ip', () => {
@@ -413,21 +405,41 @@ describe('IP Filter Plugin (integration with Fastify)', () => {
       process.env.IP_ALLOWLIST = '203.0.113.1';
       process.env.IP_DENYLIST = '';
       process.env.ADMIN_IP_ALLOWLIST = '';
+      process.env.TRUST_PROXY = '127.0.0.1';
       app = await buildServer();
       await app.ready();
     });
 
     afterAll(async () => {
       await app.close();
+      delete process.env.TRUST_PROXY;
     });
 
-    it('uses X-Forwarded-For for IP decision', async () => {
+    it('rejects a spoofed X-Forwarded-For when the proxy is not trusted', async () => {
+      process.env.TRUST_PROXY = '';
+      const untrusted = await buildServer();
+      await untrusted.ready();
+      try {
+        const res = await inject(untrusted, {
+          method: 'GET',
+          path: '/api/v1/icp/00000000-0000-0000-0000-000000000001',
+          headers: { authorization: 'Bearer sk_test_abc123', 'x-forwarded-for': '203.0.113.1' },
+          remoteAddress: '198.51.100.9',
+        });
+        expect(res.statusCode).toBe(403);
+      } finally {
+        await untrusted.close();
+        process.env.TRUST_PROXY = '127.0.0.1';
+      }
+    });
+
+    it('uses X-Forwarded-For from a trusted proxy for IP decision', async () => {
       const res = await inject(app, {
         method: 'GET',
         path: '/api/v1/icp/00000000-0000-0000-0000-000000000001',
         headers: {
           authorization: 'Bearer sk_test_abc123',
-          'x-forwarded-for': '203.0.113.1, 10.0.0.1',
+          'x-forwarded-for': '203.0.113.1',
         },
         remoteAddress: '127.0.0.1', // Fastify's internal IP
       });
