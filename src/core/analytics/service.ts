@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { classifyReply, type ReplyIntent } from './replyClassifier.js';
+import { unsubscribeLead } from '../security/suppression.js';
 import { prisma } from '../../db/client.js';
 import {
   RecordLeadInteractionFeedbackInputSchema,
@@ -11,11 +12,23 @@ export const HUMAN_REVIEW_CONFIDENCE = 85;
 export interface SentimentResult {
   sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'AMBIGUOUS';
   confidence: number;
+  intent?: ReplyIntent;
 }
 
 export function applySignalFeedback(currentWeight: number, sentiment: SentimentResult['sentiment']) {
   const delta = sentiment === 'POSITIVE' ? 5 : sentiment === 'NEGATIVE' ? -5 : 0;
   return Math.max(0, Math.min(100, currentWeight + delta));
+}
+
+/** Counter increment for the message's sequence step, or null if this metric was already counted for the message. */
+export function abStepDelta(
+  interactionType: string,
+  message: { openedAt: Date | null; clickedAt: Date | null; repliedAt: Date | null },
+): { opens: { increment: 1 } } | { clicks: { increment: 1 } } | { replies: { increment: 1 } } | null {
+  if (interactionType === 'OPEN' && !message.openedAt) return { opens: { increment: 1 } };
+  if (interactionType === 'CLICK' && !message.clickedAt) return { clicks: { increment: 1 } };
+  if (interactionType === 'REPLY' && !message.repliedAt) return { replies: { increment: 1 } };
+  return null;
 }
 
 export function requiresHumanReview(result: SentimentResult) {
@@ -28,27 +41,6 @@ export interface AnalyticsRepository {
     requiresHumanReview: boolean;
   }>;
   getMetrics(input: TrackCampaignMetricsInput): Promise<Record<string, unknown>>;
-}
-
-async function classifyWithHaiku(content: string): Promise<SentimentResult> {
-  if (!process.env.ANTHROPIC_API_KEY) return { sentiment: 'AMBIGUOUS', confidence: 0 };
-
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  try {
-    const response = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? 'claude-3-5-haiku-latest',
-      max_tokens: 100,
-      temperature: 0,
-      system: 'Classifique a resposta B2B em JSON estrito: {"sentiment":"POSITIVE|NEGATIVE|NEUTRAL|AMBIGUOUS","confidence":0-100}. Seja conservador.',
-      messages: [{ role: 'user', content }],
-    });
-    const text = response.content.find(block => block.type === 'text')?.text ?? '';
-    const parsed = JSON.parse(text) as SentimentResult;
-    if (!['POSITIVE', 'NEGATIVE', 'NEUTRAL', 'AMBIGUOUS'].includes(parsed.sentiment)) throw new Error('Invalid sentiment');
-    return { sentiment: parsed.sentiment, confidence: Math.max(0, Math.min(100, Number(parsed.confidence))) };
-  } catch {
-    return { sentiment: 'AMBIGUOUS', confidence: 0 };
-  }
 }
 
 const prismaRepository: AnalyticsRepository = {
@@ -92,6 +84,10 @@ const prismaRepository: AnalyticsRepository = {
 
       if (input.message_id) {
         const status = input.interaction_type === 'OPEN' ? 'OPENED' : input.interaction_type === 'CLICK' ? 'CLICKED' : input.interaction_type === 'REPLY' ? 'REPLIED' : 'BOUNCED';
+        const before = await tx.outreachMessage.findUnique({
+          where: { id: input.message_id },
+          select: { stepId: true, openedAt: true, clickedAt: true, repliedAt: true },
+        });
         const message = await tx.outreachMessage.update({
           where: { id: input.message_id },
           data: {
@@ -102,6 +98,9 @@ const prismaRepository: AnalyticsRepository = {
           },
           select: { signalId: true },
         });
+        // A/B attribution: credit the step (variant) that produced this message, once per message per metric.
+        const stepDelta = before ? abStepDelta(input.interaction_type, before) : null;
+        if (stepDelta) await tx.sequenceStep.update({ where: { id: before!.stepId }, data: stepDelta });
         if (input.interaction_type === 'REPLY' && message.signalId) {
           const signal = await tx.intentSignal.findUnique({ where: { id: message.signalId }, select: { intentWeight: true } });
           if (signal) await tx.intentSignal.update({ where: { id: message.signalId }, data: { intentWeight: applySignalFeedback(Number(signal.intentWeight), sentiment.sentiment) } });
@@ -111,11 +110,20 @@ const prismaRepository: AnalyticsRepository = {
       if (input.interaction_type === 'REPLY') {
         const sequences = await tx.outreachSequence.findMany({ where: { campaignId: input.campaign_id, status: 'ACTIVE', leads: { some: { id: input.lead_id } } }, select: { id: true } });
         for (const sequence of sequences) await tx.outreachSequence.update({ where: { id: sequence.id }, data: { status: 'PAUSED', pausedUntil: null } });
-        await tx.lead.update({ where: { id: input.lead_id }, data: { status: sentiment.sentiment === 'POSITIVE' ? 'REPLIED_POSITIVE' : sentiment.sentiment === 'NEGATIVE' ? 'REPLIED_NEGATIVE' : 'ENGAGED' } });
+        const status = sentiment.intent === 'UNSUBSCRIBE' ? 'UNSUBSCRIBED'
+          : sentiment.sentiment === 'POSITIVE' ? 'REPLIED_POSITIVE'
+          : sentiment.sentiment === 'NEGATIVE' ? 'REPLIED_NEGATIVE'
+          : 'ENGAGED';
+        await tx.lead.update({ where: { id: input.lead_id }, data: { status } });
       }
       if (input.interaction_type === 'BOUNCE') await tx.lead.update({ where: { id: input.lead_id }, data: { status: 'BOUNCED' } });
       return feedback;
     });
+    // Opt-out by reply: cascade into the global suppression list (email, domain, LinkedIn) across campaigns.
+    if (input.interaction_type === 'REPLY' && sentiment.intent === 'UNSUBSCRIBE') {
+      await unsubscribeLead(prisma as any, input.lead_id, 'reply-classifier').catch(err =>
+        console.warn('[Analytics] unsubscribe cascade failed:', err instanceof Error ? err.message : String(err)));
+    }
     return { feedbackId: feedback.id, requiresHumanReview: review };
   },
 
@@ -133,8 +141,9 @@ export class AnalyticsService {
 
   async recordFeedback(rawInput: RecordLeadInteractionFeedbackInput) {
     const input = RecordLeadInteractionFeedbackInputSchema.parse(rawInput);
-    const sentiment = input.interaction_type === 'REPLY' && !input.sentiment
-      ? await classifyWithHaiku(input.content ?? '')
+    // Replies without an explicit sentiment go through the single reply classifier (LLM or heuristic).
+    const sentiment: SentimentResult | undefined = input.interaction_type === 'REPLY' && !input.sentiment
+      ? await classifyReply(input.content ?? '')
       : input.sentiment ? { sentiment: input.sentiment, confidence: input.confidence ?? 100 } : undefined;
     return this.repository.recordFeedback(input, sentiment);
   }

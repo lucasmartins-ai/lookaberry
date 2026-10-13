@@ -36,8 +36,8 @@ const anthropicGenerator: MessageGenerator = {
     const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
       model: config.ANTHROPIC_MODEL,
-      max_tokens: 300,
-      temperature: 0.3,
+      // Room for adaptive thinking (on by default in current models); sampling params are rejected there.
+      max_tokens: 2000,
       system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: `Channel: ${channel}\n${prompt}` }],
     });

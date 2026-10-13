@@ -205,15 +205,27 @@ describe('classifySentiment', () => {
     expect(result.confidence).toBe(10);
   });
 
-  it('classifies neutral content as AMBIGUOUS', () => {
+  it('classifies a plain question as NEUTRAL', () => {
     const result = classifySentiment('Who is this?');
-    expect(result.sentiment).toBe('AMBIGUOUS');
+    expect(result.sentiment).toBe('NEUTRAL');
   });
 
-  it('classifies mixed signals as AMBIGUOUS', () => {
+  it('a polite refusal with "please stop" is NEGATIVE (opt-out wins over "thanks")', () => {
     const result = classifySentiment('Thanks but no thanks, please stop');
-    expect(result.sentiment).toBe('AMBIGUOUS');
-    expect(result.confidence).toBe(30);
+    expect(result.sentiment).toBe('NEGATIVE');
+  });
+
+  it('does not match words inside other words ("yesterday" is not "yes")', () => {
+    expect(classifySentiment('I saw this yesterday').sentiment).toBe('AMBIGUOUS');
+  });
+
+  it('"not interested" is NEGATIVE, not ambiguous', () => {
+    expect(classifySentiment('Not interested, sorry').sentiment).toBe('NEGATIVE');
+  });
+
+  it('classifies Portuguese opt-outs and interest', () => {
+    expect(classifySentiment('Por favor me remova da lista').sentiment).toBe('NEGATIVE');
+    expect(classifySentiment('Tenho interesse, pode me mandar mais detalhes?').sentiment).toBe('POSITIVE');
   });
 
   it('handles "let\'s" as POSITIVE keyword', () => {
@@ -356,7 +368,7 @@ describe('processReply', () => {
       replyContent: 'Who is this?',
     });
 
-    expect(result.sentiment.sentiment).toBe('AMBIGUOUS');
+    expect(result.sentiment.sentiment).toBe('NEUTRAL');
     expect(mockPrisma.lead.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'ENGAGED' }),

@@ -247,14 +247,14 @@ Target Geos: ${targetGeos ? targetGeos.join(', ') : 'Global / Any'}${jevHint}
 WEBSITE CONTENT:
 ${contentSnippet}`;
 
-  // 1. Try Anthropic Claude 3.5 Haiku
+  // 1. Try Anthropic (config.ANTHROPIC_MODEL)
   if (config.ANTHROPIC_API_KEY) {
     try {
       const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
       const response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku-latest',
-        max_tokens: 2000,
-        temperature: 0.2,
+        model: config.ANTHROPIC_MODEL,
+        // Room for adaptive thinking (on by default in current models); sampling params are rejected there.
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
       });

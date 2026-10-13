@@ -4,6 +4,7 @@ import { LinkedInAdapter } from './adapters/linkedin.js';
 import { prisma } from '../../db/client.js';
 import type { SentimentResult } from '../analytics/service.js';
 import { applySignalFeedback } from '../analytics/service.js';
+import { classifyReplyHeuristic } from '../analytics/replyClassifier.js';
 import type { ExecutionContext } from './types.js';
 import type { RecommendedAction } from '../decision/types.js';
 
@@ -19,24 +20,10 @@ export interface InboxWorkerDependencies {
 
 // ─── Sentiment classification heuristic ───
 
-const POSITIVE_KEYWORDS = ['thanks', 'thank you', 'interested', 'sounds good', 'great', 'awesome', 'yes', 'let\'s', 'would love', 'happy to', 'looking forward', 'set up', 'schedule', 'call', 'meeting', 'catch up'];
-const NEGATIVE_KEYWORDS = ['unsubscribe', 'stop', 'not interested', 'remove', 'no thanks', 'don\'t contact', 'leave me alone', 'spam', 'opt out', 'do not', 'please stop'];
-
+/** Sync sentiment for LinkedIn inbox polling; same rules as the shared reply classifier's fallback. */
 export function classifySentiment(content: string): SentimentResult {
-  const lower = content.toLowerCase();
-  const positiveMatches = POSITIVE_KEYWORDS.filter(kw => lower.includes(kw)).length;
-  const negativeMatches = NEGATIVE_KEYWORDS.filter(kw => lower.includes(kw)).length;
-
-  if (positiveMatches > 0 && negativeMatches === 0) {
-    return { sentiment: 'POSITIVE', confidence: Math.min(90, 40 + positiveMatches * 20) };
-  }
-  if (negativeMatches > 0 && positiveMatches === 0) {
-    return { sentiment: 'NEGATIVE', confidence: Math.min(90, 40 + negativeMatches * 20) };
-  }
-  if (positiveMatches > 0 && negativeMatches > 0) {
-    return { sentiment: 'AMBIGUOUS', confidence: 30 };
-  }
-  return { sentiment: 'AMBIGUOUS', confidence: 10 };
+  const { sentiment, confidence } = classifyReplyHeuristic(content);
+  return { sentiment, confidence };
 }
 
 // ─── Inbox reader worker ───
@@ -298,7 +285,8 @@ export async function processReply(
   if (sentiment.sentiment === 'POSITIVE') {
     leadStatus = 'REPLIED_POSITIVE';
   } else if (sentiment.sentiment === 'NEGATIVE') {
-    leadStatus = 'UNSUBSCRIBED';
+    // Only an explicit opt-out unsubscribes; a plain "no" is a negative reply (same rule as analytics).
+    leadStatus = classifyReplyHeuristic(params.replyContent).intent === 'UNSUBSCRIBE' ? 'UNSUBSCRIBED' : 'REPLIED_NEGATIVE';
   } else {
     leadStatus = 'ENGAGED';
   }

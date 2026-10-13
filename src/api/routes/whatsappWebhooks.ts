@@ -102,22 +102,18 @@ async function processInboundMessage(msg: WhatsAppInboundMessage): Promise<void>
   try {
     // Record REPLY feedback
     const { analyticsService } = await import('../../core/analytics/service.js');
-    const { classifySentiment } = await import('../../core/execution/inboxWorker.js');
 
-    const sentimentResult = classifySentiment(body);
-
+    // No sentiment passed: recordFeedback runs the shared reply classifier (and the opt-out cascade).
     await analyticsService.recordFeedback({
       campaign_id: leadInfo.campaignId,
       lead_id: leadInfo.leadId,
       message_id: leadInfo.messageId,
       interaction_type: 'REPLY',
-      sentiment: sentimentResult.sentiment as any,
-      confidence: sentimentResult.confidence,
       content: body,
       provider: 'whatsapp',
     });
 
-    console.log(`[WhatsApp Webhook] Reply from ${waId} → ${sentimentResult.sentiment} (${sentimentResult.confidence}%)`);
+    console.log(`[WhatsApp Webhook] Reply recorded for lead ${leadInfo.leadId}`);
   } catch (err) {
     console.warn(`[WhatsApp Webhook] Could not record reply feedback: ${err instanceof Error ? err.message : String(err)}`);
   }
