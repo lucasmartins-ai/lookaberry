@@ -1,4 +1,5 @@
 import { prisma } from './client.js';
+import { HASH_EMBEDDING_MODEL } from '../core/icp/embeddings.js';
 
 export function vectorToString(embedding: number[]): string {
   if (!Array.isArray(embedding) || embedding.length === 0) {
@@ -28,29 +29,33 @@ export async function initVectorExtension(): Promise<void> {
   }
 }
 
-export async function setIcpProfileEmbedding(icpId: string, embedding: number[]): Promise<void> {
-  const vectorStr = vectorToString(embedding);
+export async function setIcpProfileEmbedding(icpId: string, embedding: number[], model = HASH_EMBEDDING_MODEL): Promise<void> {
   await prisma.$executeRawUnsafe(
-    `UPDATE icp_profiles SET embedding = $1::vector, updated_at = NOW() WHERE id = $2::uuid`,
-    vectorStr,
-    icpId
+    `UPDATE icp_profiles SET embedding = $1::vector, embedding_model = $3, updated_at = NOW() WHERE id = $2::uuid`,
+    vectorToString(embedding),
+    icpId,
+    model,
   );
 }
 
-export async function setCompanyEmbedding(companyId: string, embedding: number[]): Promise<void> {
-  const vectorStr = vectorToString(embedding);
+export async function setCompanyEmbedding(companyId: string, embedding: number[], model = HASH_EMBEDDING_MODEL): Promise<void> {
   await prisma.$executeRawUnsafe(
-    `UPDATE companies SET embedding = $1::vector, updated_at = NOW() WHERE id = $2::uuid`,
-    vectorStr,
-    companyId
+    `UPDATE companies SET embedding = $1::vector, embedding_model = $3, updated_at = NOW() WHERE id = $2::uuid`,
+    vectorToString(embedding),
+    companyId,
+    model,
   );
 }
 
-export async function setCompanyEmbeddingIfMissing(companyId: string, embedding: number[]): Promise<void> {
-  const vectorStr = vectorToString(embedding);
+/** Set when missing, or upgrade a vector from another model to a semantic one (never downgrade to hash). */
+export async function setCompanyEmbeddingIfMissing(companyId: string, embedding: number[], model = HASH_EMBEDDING_MODEL): Promise<void> {
   await prisma.$executeRawUnsafe(
-    `UPDATE companies SET embedding = $1::vector, updated_at = NOW() WHERE id = $2::uuid AND embedding IS NULL`,
-    vectorStr,
-    companyId
+    `UPDATE companies SET embedding = $1::vector, embedding_model = $3, updated_at = NOW()
+      WHERE id = $2::uuid
+        AND (embedding IS NULL OR (embedding_model IS DISTINCT FROM $3 AND $3 <> $4))`,
+    vectorToString(embedding),
+    companyId,
+    model,
+    HASH_EMBEDDING_MODEL,
   );
 }

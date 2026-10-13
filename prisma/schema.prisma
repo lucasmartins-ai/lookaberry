@@ -134,6 +134,7 @@ model IcpProfile {
   techStackKeywords String[]                     @default([]) @map("tech_stack_keywords")
   valuePropositions Json                         @default("[]") @map("value_propositions")
   embedding         Unsupported("vector(1536)")?
+  embeddingModel    String?                      @map("embedding_model") @db.VarChar(64)
   createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime                     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -175,6 +176,7 @@ model Company {
   whatsappPhone  String?                      @map("whatsapp_phone") @db.VarChar(50)
   icpFitScore    Decimal?                     @default(0.00) @map("icp_fit_score") @db.Decimal(5, 2)
   embedding      Unsupported("vector(1536)")?
+  embeddingModel String?                      @map("embedding_model") @db.VarChar(64)
   lastEnrichedAt DateTime?                    @map("last_enriched_at") @db.Timestamptz(6)
   createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime                     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -194,36 +196,36 @@ model Company {
 }
 
 model IntentSignal {
-  id                    String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  companyId             String                 @map("company_id") @db.Uuid
-  providerId            String?                @map("provider_id") @db.VarChar(100)
-  sourceId              String?                @map("source_id") @db.Uuid
-  companyEvidenceId     String?                @map("company_evidence_id") @db.Uuid
-  signalType            String                 @map("signal_type") @db.VarChar(100)
-  source                String                 @db.VarChar(100)
-  sourceUrl             String?                @map("source_url") @db.VarChar(1000)
-  title                 String                 @db.VarChar(500)
-  rawPayload            Json?                  @default("{}") @map("raw_payload")
-  normalizedData        Json                   @default("{}") @map("normalized_data")
-  metadata              Json                   @default("{}")
-  summary               String                 @db.Text
-  intentWeight          Decimal                @default(50.00) @map("intent_weight") @db.Decimal(5, 2)
-  confidence            Decimal                @default(1.0000) @db.Decimal(5, 4)
-  sourceQuality         Decimal                @default(0.5000) @map("source_quality") @db.Decimal(5, 4)
-  cost                  Decimal                @default(0.0000) @db.Decimal(8, 4)
+  id                     String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  companyId              String                 @map("company_id") @db.Uuid
+  providerId             String?                @map("provider_id") @db.VarChar(100)
+  sourceId               String?                @map("source_id") @db.Uuid
+  companyEvidenceId      String?                @map("company_evidence_id") @db.Uuid
+  signalType             String                 @map("signal_type") @db.VarChar(100)
+  source                 String                 @db.VarChar(100)
+  sourceUrl              String?                @map("source_url") @db.VarChar(1000)
+  title                  String                 @db.VarChar(500)
+  rawPayload             Json?                  @default("{}") @map("raw_payload")
+  normalizedData         Json                   @default("{}") @map("normalized_data")
+  metadata               Json                   @default("{}")
+  summary                String                 @db.Text
+  intentWeight           Decimal                @default(50.00) @map("intent_weight") @db.Decimal(5, 2)
+  confidence             Decimal                @default(1.0000) @db.Decimal(5, 4)
+  sourceQuality          Decimal                @default(0.5000) @map("source_quality") @db.Decimal(5, 4)
+  cost                   Decimal                @default(0.0000) @db.Decimal(8, 4)
   evidenceClassification EvidenceClassification @default(UNVERIFIED) @map("evidence_classification")
-  contentHash           String?                @map("content_hash") @db.VarChar(128)
-  deduplicationKey      String?                @map("deduplication_key") @db.VarChar(255)
-  observedAt            DateTime               @default(now()) @map("observed_at") @db.Timestamptz(6)
-  ttlDays               Int                    @default(30) @map("ttl_days")
-  detectedAt            DateTime               @default(now()) @map("detected_at") @db.Timestamptz(6)
-  expiresAt             DateTime               @map("expires_at") @db.Timestamptz(6)
-  isActive              Boolean                @default(true) @map("is_active")
-  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  contentHash            String?                @map("content_hash") @db.VarChar(128)
+  deduplicationKey       String?                @map("deduplication_key") @db.VarChar(255)
+  observedAt             DateTime               @default(now()) @map("observed_at") @db.Timestamptz(6)
+  ttlDays                Int                    @default(30) @map("ttl_days")
+  detectedAt             DateTime               @default(now()) @map("detected_at") @db.Timestamptz(6)
+  expiresAt              DateTime               @map("expires_at") @db.Timestamptz(6)
+  isActive               Boolean                @default(true) @map("is_active")
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  company         Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  providerSource  Source?         @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  companyEvidence CompanyEvidence? @relation(fields: [companyEvidenceId], references: [id], onDelete: SetNull)
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  providerSource  Source?           @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  companyEvidence CompanyEvidence?  @relation(fields: [companyEvidenceId], references: [id], onDelete: SetNull)
   messages        OutreachMessage[]
 
   @@index([companyId, isActive], map: "idx_intent_signals_company_active")
@@ -323,14 +325,14 @@ model SequenceStep {
   createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
   branchOn        BranchCondition @default(NONE) @map("branch_on")
-  branchStepIndex  Int?            @map("branch_step_index")
-  variantGroup     String?         @map("variant_group") @db.VarChar(100)
-  variantWeight    Float           @default(1.0) @map("variant_weight")
-  active           Boolean         @default(true)
-  impressions      Int             @default(0)
-  opens            Int             @default(0)
-  replies          Int             @default(0)
-  clicks           Int             @default(0)
+  branchStepIndex Int?            @map("branch_step_index")
+  variantGroup    String?         @map("variant_group") @db.VarChar(100)
+  variantWeight   Float           @default(1.0) @map("variant_weight")
+  active          Boolean         @default(true)
+  impressions     Int             @default(0)
+  opens           Int             @default(0)
+  replies         Int             @default(0)
+  clicks          Int             @default(0)
 
   campaign Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   sequence OutreachSequence? @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
@@ -350,12 +352,12 @@ model OutreachSequence {
   createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  campaign         Campaign                    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  leads            Lead[]
-  steps            SequenceStep[]
-  versions         OutreachSequenceVersion[]   @relation("SequenceVersions")
-  currentVersion   OutreachSequenceVersion?    @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
-  leadStates       LeadSequenceState[]
+  campaign       Campaign                  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leads          Lead[]
+  steps          SequenceStep[]
+  versions       OutreachSequenceVersion[] @relation("SequenceVersions")
+  currentVersion OutreachSequenceVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  leadStates     LeadSequenceState[]
 
   @@index([status, nextRunAt], map: "idx_outreach_sequences_due")
   @@map("outreach_sequences")
@@ -370,7 +372,7 @@ model OutreachSequenceVersion {
   changeDescription String?  @map("change_description") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  sequence           OutreachSequence  @relation("SequenceVersions", fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequence           OutreachSequence   @relation("SequenceVersions", fields: [sequenceId], references: [id], onDelete: Cascade)
   currentForSequence OutreachSequence[] @relation("CurrentVersion")
   messages           OutreachMessage[]
 
@@ -412,7 +414,7 @@ model OutreachAccount {
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  messages    OutreachMessage[]
+  messages OutreachMessage[]
 
   @@unique([provider, externalId, channel], map: "uq_outreach_account_provider_external_channel")
   @@map("outreach_accounts")
@@ -430,13 +432,13 @@ model OutreachMessage {
   body              String        @db.Text
   status            MessageStatus @default(QUEUED)
   externalMessageId String?       @map("external_message_id") @db.VarChar(255)
-  outreachAccountId  String?       @map("outreach_account_id") @db.Uuid
-  sequenceVersionId  String?       @map("sequence_version_id") @db.Uuid
-  scheduledAt        DateTime?     @map("scheduled_at") @db.Timestamptz(6)
-  openedAt           DateTime?     @map("opened_at") @db.Timestamptz(6)
-  clickedAt          DateTime?     @map("clicked_at") @db.Timestamptz(6)
-  errorReason        String?       @map("error_reason") @db.Text
-  sentAt             DateTime?     @map("sent_at") @db.Timestamptz(6)
+  outreachAccountId String?       @map("outreach_account_id") @db.Uuid
+  sequenceVersionId String?       @map("sequence_version_id") @db.Uuid
+  scheduledAt       DateTime?     @map("scheduled_at") @db.Timestamptz(6)
+  openedAt          DateTime?     @map("opened_at") @db.Timestamptz(6)
+  clickedAt         DateTime?     @map("clicked_at") @db.Timestamptz(6)
+  errorReason       String?       @map("error_reason") @db.Text
+  sentAt            DateTime?     @map("sent_at") @db.Timestamptz(6)
   repliedAt         DateTime?     @map("replied_at") @db.Timestamptz(6)
   replySentiment    String?       @map("reply_sentiment") @db.VarChar(50)
   createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -723,20 +725,20 @@ model IdempotencyKey {
 }
 
 model DeadLetterJob {
-  id               String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  sequenceId       String       @map("sequence_id") @db.Uuid
-  jobData          Json         @default("{}") @map("job_data")
-  errorMessage     String       @map("error_message") @db.Text
-  errorStack       String?      @map("error_stack") @db.Text
-  attemptCount     Int          @default(0) @map("attempt_count")
-  firstFailedAt    DateTime     @default(now()) @map("first_failed_at") @db.Timestamptz(6)
-  deadLetteredAt   DateTime     @default(now()) @map("dead_lettered_at") @db.Timestamptz(6)
-  status           DLQJobStatus @default(PENDING)
-  resolvedBy       String?      @map("resolved_by") @db.VarChar(255)
-  resolutionNotes  String?      @map("resolution_notes") @db.Text
-  resolvedAt       DateTime?    @map("resolved_at") @db.Timestamptz(6)
-  replayable       Boolean      @default(true)
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  id              String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  sequenceId      String       @map("sequence_id") @db.Uuid
+  jobData         Json         @default("{}") @map("job_data")
+  errorMessage    String       @map("error_message") @db.Text
+  errorStack      String?      @map("error_stack") @db.Text
+  attemptCount    Int          @default(0) @map("attempt_count")
+  firstFailedAt   DateTime     @default(now()) @map("first_failed_at") @db.Timestamptz(6)
+  deadLetteredAt  DateTime     @default(now()) @map("dead_lettered_at") @db.Timestamptz(6)
+  status          DLQJobStatus @default(PENDING)
+  resolvedBy      String?      @map("resolved_by") @db.VarChar(255)
+  resolutionNotes String?      @map("resolution_notes") @db.Text
+  resolvedAt      DateTime?    @map("resolved_at") @db.Timestamptz(6)
+  replayable      Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([status], map: "idx_dlq_status")
   @@index([sequenceId], map: "idx_dlq_sequence")
@@ -786,26 +788,26 @@ enum SuppressionType {
 }
 
 model ApiKey {
-  id           String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  key          String            @unique @db.VarChar(128)
-  name         String            @db.VarChar(255)
-  permission   ApiKeyPermission  @default(OPERATOR)
-  userId       String?           @map("user_id") @db.Uuid
-  teamId       String?           @map("team_id") @db.Uuid
-  campaignIds  String[]          @default([]) @map("campaign_ids")
-  active       Boolean           @default(true)
-  expiresAt    DateTime?         @map("expires_at") @db.Timestamptz(6)
-  lastUsedAt   DateTime?         @map("last_used_at") @db.Timestamptz(6)
-  rotatedFrom  String?           @map("rotated_from") @db.VarChar(128)
-  version      Int               @default(1)
-  requireTotp  Boolean           @default(false) @map("require_totp")
-  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id          String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  key         String           @unique @db.VarChar(128)
+  name        String           @db.VarChar(255)
+  permission  ApiKeyPermission @default(OPERATOR)
+  userId      String?          @map("user_id") @db.Uuid
+  teamId      String?          @map("team_id") @db.Uuid
+  campaignIds String[]         @default([]) @map("campaign_ids")
+  active      Boolean          @default(true)
+  expiresAt   DateTime?        @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt  DateTime?        @map("last_used_at") @db.Timestamptz(6)
+  rotatedFrom String?          @map("rotated_from") @db.VarChar(128)
+  version     Int              @default(1)
+  requireTotp Boolean          @default(false) @map("require_totp")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
   team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
-  auditLogs AuditLog[]
+  auditLogs  AuditLog[]
   totpSecret TotpSecret?
 
   @@index([active], map: "idx_api_keys_active")
@@ -816,16 +818,16 @@ model ApiKey {
 }
 
 model User {
-  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  email     String    @unique @db.VarChar(320)
-  name      String    @db.VarChar(255)
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email     String   @unique @db.VarChar(320)
+  name      String   @db.VarChar(255)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  apiKeys       ApiKey[]
-  userTeams     UserTeam[]
-  auditLogs     AuditLog[]
+  apiKeys   ApiKey[]
+  userTeams UserTeam[]
+  auditLogs AuditLog[]
 
   @@map("users")
 }
@@ -844,11 +846,11 @@ model Team {
 }
 
 model UserTeam {
-  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  teamId    String   @map("team_id") @db.Uuid
+  id        String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  teamId    String           @map("team_id") @db.Uuid
   role      ApiKeyPermission @default(OPERATOR)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -858,18 +860,18 @@ model UserTeam {
 }
 
 model AuditLog {
-  id           String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  action       AuditAction
-  actorId      String?      @map("actor_id") @db.Uuid
-  apiKeyId     String?      @map("api_key_id") @db.Uuid
-  targetType   String?      @map("target_type") @db.VarChar(100)
-  targetId     String?      @map("target_id") @db.VarChar(100)
-  details      Json         @default("{}")
-  ip           String?      @db.VarChar(45)
-  userAgent    String?      @map("user_agent") @db.VarChar(500)
+  id            String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  action        AuditAction
+  actorId       String?     @map("actor_id") @db.Uuid
+  apiKeyId      String?     @map("api_key_id") @db.Uuid
+  targetType    String?     @map("target_type") @db.VarChar(100)
+  targetId      String?     @map("target_id") @db.VarChar(100)
+  details       Json        @default("{}")
+  ip            String?     @db.VarChar(45)
+  userAgent     String?     @map("user_agent") @db.VarChar(500)
   correlationId String?     @map("correlation_id") @db.VarChar(100)
-  severity     String       @default("INFO") @db.VarChar(20)
-  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  severity      String      @default("INFO") @db.VarChar(20)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
   actor  User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
   apiKey ApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
@@ -883,15 +885,15 @@ model AuditLog {
 }
 
 model GlobalSuppressionList {
-  id              String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  suppressionType SuppressionType  @map("suppression_type")
-  value           String           @db.VarChar(500)
-  reason          String?          @db.Text
-  addedBy         String?          @map("added_by") @db.VarChar(255)
-  leadId          String?          @map("lead_id") @db.Uuid
-  campaignId      String?          @map("campaign_id") @db.Uuid
-  isAutomatic     Boolean          @default(false) @map("is_automatic")
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  id              String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  suppressionType SuppressionType @map("suppression_type")
+  value           String          @db.VarChar(500)
+  reason          String?         @db.Text
+  addedBy         String?         @map("added_by") @db.VarChar(255)
+  leadId          String?         @map("lead_id") @db.Uuid
+  campaignId      String?         @map("campaign_id") @db.Uuid
+  isAutomatic     Boolean         @default(false) @map("is_automatic")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([suppressionType, value], map: "uq_suppression_type_value")
   @@index([suppressionType], map: "idx_suppression_type")
@@ -902,14 +904,14 @@ model GlobalSuppressionList {
 // ─────────────────────────── S15: Lead Anonymization Fields ───────────────────────────
 
 model DataRetentionPolicy {
-  id              String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  entityType      String   @unique @map("entity_type") @db.VarChar(100)
-  retentionDays   Int      @map("retention_days")
-  autoAnonymize   Boolean  @default(false) @map("auto_anonymize")
-  autoDelete      Boolean  @default(false) @map("auto_delete")
-  description     String?  @db.Text
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  entityType    String   @unique @map("entity_type") @db.VarChar(100)
+  retentionDays Int      @map("retention_days")
+  autoAnonymize Boolean  @default(false) @map("auto_anonymize")
+  autoDelete    Boolean  @default(false) @map("auto_delete")
+  description   String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("data_retention_policies")
 }

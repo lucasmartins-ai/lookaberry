@@ -2,7 +2,7 @@ import { prisma } from '../../db/client.js';
 import { setIcpProfileEmbedding } from '../../db/pgvector.js';
 import { scrapeWebsite } from './scraper.js';
 import { analyzeIcpContent, IcpAnalysisResult } from './analyzer.js';
-import { generateEmbedding } from './embeddings.js';
+import { generateEmbeddingWithModel } from './embeddings.js';
 
 export interface AnalyzeIcpParams {
   website_url: string;
@@ -46,7 +46,7 @@ Industries: ${analysis.target_industries.join(', ')}
 Value Props: ${analysis.value_propositions.join('; ')}
 Personas: ${analysis.target_personas.map(p => `${p.title} (${p.seniority}): ${p.core_pain}`).join('; ')}`;
 
-    const embedding = await generateEmbedding(embeddingText);
+    const { embedding, model: embeddingModel } = await generateEmbeddingWithModel(embeddingText);
 
     // 4. Persist ICP Profile in PostgreSQL
     const createdProfile = await prisma.icpProfile.create({
@@ -66,7 +66,7 @@ Personas: ${analysis.target_personas.map(p => `${p.title} (${p.seniority}): ${p.
     const icpId = createdProfile.id;
 
     // 5. Store 1536-dim vector embedding in pgvector column
-    await setIcpProfileEmbedding(icpId, embedding);
+    await setIcpProfileEmbedding(icpId, embedding, embeddingModel);
 
     // 6. Persist ICP Personas
     if (analysis.target_personas.length > 0) {

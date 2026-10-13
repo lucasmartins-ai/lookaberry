@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { setCompanyEmbeddingIfMissing } from '../../db/pgvector.js';
-import { generateDeterministicEmbedding } from '../icp/embeddings.js';
+import { generateEmbeddingWithModel } from '../icp/embeddings.js';
 import {
   normalizeConfidence,
   sanitizeEvidenceData,
@@ -253,9 +253,11 @@ export class IntentService {
       },
     });
 
-    // Company embeddings remain token-free. Without OpenAI, the deterministic fallback is explicitly non-semantic.
+    // Same embedding backend as the ICP side, so cosine similarity means something. The model label
+    // keeps hash fallbacks out of ICP-fit comparisons (see DecisionService.fetchIcpFit).
     const companyText = [company.name, company.industry, company.description, company.techStack.join(', ')].filter(Boolean).join(' ');
-    await setCompanyEmbeddingIfMissing(company.id, generateDeterministicEmbedding(companyText));
+    const { embedding, model } = await generateEmbeddingWithModel(companyText);
+    await setCompanyEmbeddingIfMissing(company.id, embedding, model);
 
     const source = await this.upsertSource(signal);
     const evidence = await this.upsertCompanyEvidence(company.id, source.id, signal);
