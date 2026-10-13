@@ -2,7 +2,7 @@ import fp from 'fastify-plugin';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config/env.js';
 import { prisma } from '../../db/client.js';
-import type { ApiKeyRecord } from '../../core/security/apiKeys.js';
+import { hashApiKey, type ApiKeyRecord } from '../../core/security/apiKeys.js';
 import { validateRequestTotp } from '../../core/security/totp.js';
 
 const EXEMPT_PREFIXES = ['/health', '/docs', '/api/v1/email/track'];
@@ -98,7 +98,7 @@ async function validateKey(key: string): Promise<ApiKeyRecord | null> {
   // Check DB (S15: ApiKey model)
   try {
     const client = prisma as any;
-    const dbKey = await client.apiKey?.findUnique({ where: { key } });
+    const dbKey = await client.apiKey?.findUnique({ where: { key: hashApiKey(key) } });
     if (dbKey && dbKey.active) {
       // Check expiry
       if (dbKey.expiresAt && new Date(dbKey.expiresAt) < new Date()) {

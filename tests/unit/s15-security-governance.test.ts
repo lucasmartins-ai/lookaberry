@@ -25,6 +25,8 @@ import {
   rotateApiKey,
   revokeApiKey,
   validateApiKey,
+  listApiKeys,
+  hashApiKey,
   hasPermission,
   canAccessCampaign,
   type ApiKeyRecord,
@@ -102,6 +104,17 @@ describe('S15 API Key Management', () => {
       expect(record.permission).toBe('OPERATOR');
       expect(record.active).toBe(true);
       expect(record.version).toBe(1);
+    });
+
+    it('stores only the SHA-256 of the key and never lists it', async () => {
+      const { plainKey } = await createApiKey(store, { name: 'hashed', permission: 'ADMIN' });
+      const stored = (store.apiKey.create as any).mock.calls[0][0].data.key;
+      expect(stored).toBe(hashApiKey(plainKey));
+      expect(stored).not.toContain(plainKey);
+
+      const listed = await listApiKeys(store);
+      expect(listed[0]).not.toHaveProperty('key');
+      expect(JSON.stringify(listed)).not.toContain(plainKey);
     });
 
     it('sets expiry correctly', async () => {

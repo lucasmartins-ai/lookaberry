@@ -72,16 +72,16 @@ function generateKey(): string {
   return KEY_PREFIX + raw.toString('base64url');
 }
 
-/** Hash a key for storage lookup (not for the key value itself, just for rotatedFrom ref) */
-function hashKey(key: string): string {
-  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 32);
+/** SHA-256 of a plain key. Only this hash is stored; lookups hash the presented key first. */
+export function hashApiKey(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex');
 }
 
 // ──────────────────────────────── Key Management ────────────────────────────────
 
 /**
  * Create a new API key.
- * The full key value is returned only once at creation — it is stored hashed.
+ * The full key value is returned only once at creation — only its SHA-256 is stored.
  */
 export async function createApiKey(
   store: ApiKeyStoreFull,
@@ -95,7 +95,7 @@ export async function createApiKey(
 
   const record = await store.apiKey.create({
     data: {
-      key: plainKey,
+      key: hashApiKey(plainKey),
       name: input.name,
       permission: input.permission,
       userId: input.userId ?? null,
@@ -128,7 +128,7 @@ export async function createApiKey(
   return {
     record: {
       id: record.id,
-      key: hashKey(plainKey),
+      key: hashApiKey(plainKey),
       name: input.name,
       permission: input.permission,
       userId: input.userId ?? null,
@@ -170,7 +170,7 @@ export async function rotateApiKey(
   // Create new key linked to old
   const record = await store.apiKey.create({
     data: {
-      key: plainKey,
+      key: hashApiKey(plainKey),
       name: existing.name,
       permission: existing.permission,
       userId: existing.userId,
@@ -178,7 +178,7 @@ export async function rotateApiKey(
       campaignIds: existing.campaignIds ?? [],
       active: true,
       expiresAt: existing.expiresAt,
-      rotatedFrom: hashKey(existing.key),
+      rotatedFrom: existing.key,
       version: newVersion,
     },
   });
@@ -206,7 +206,7 @@ export async function rotateApiKey(
   return {
     record: {
       id: record.id,
-      key: hashKey(plainKey),
+      key: hashApiKey(plainKey),
       name: existing.name,
       permission: existing.permission,
       userId: existing.userId,
@@ -266,7 +266,7 @@ export async function revokeApiKey(
 export async function listApiKeys(
   store: ApiKeyStoreFull,
   options?: { activeOnly?: boolean; teamId?: string; userId?: string },
-): Promise<Array<ApiKeyRecord & { keyPreview: string }>> {
+): Promise<Array<Omit<ApiKeyRecord, 'key'> & { keyPreview: string }>> {
   const where: Record<string, unknown> = {};
   if (options?.activeOnly !== false) where.active = true;
   if (options?.teamId) where.teamId = options.teamId;
@@ -277,9 +277,10 @@ export async function listApiKeys(
     orderBy: { createdAt: 'desc' },
   });
 
-  return keys.map((k) => ({
-    ...k,
-    keyPreview: k.key.length > 12 ? `${k.key.slice(0, 6)}...${k.key.slice(-4)}` : k.key.slice(0, 4),
+  // Never return the stored key (hash) — only a short fingerprint of it.
+  return keys.map(({ key, ...rest }) => ({
+    ...rest,
+    keyPreview: `sha256:${key.slice(0, 8)}`,
   }));
 }
 
@@ -291,7 +292,7 @@ export async function validateApiKey(
   store: ApiKeyStoreFull,
   plainKey: string,
 ): Promise<ApiKeyRecord | null> {
-  const record = await store.apiKey.findUnique({ where: { key: plainKey } });
+  const record = await store.apiKey.findUnique({ where: { key: hashApiKey(plainKey) } });
   if (!record) return null;
 
   if (!record.active) return null;
