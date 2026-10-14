@@ -67,6 +67,8 @@ export interface DecisionContext {
   companyName: string;
   /** ICP fit score 0–1 */
   icpFit: number;
+  /** Company industry (raw), used to look up learned channel priors */
+  segment?: string;
   /** Lead first name, if available (used in message templates) */
   leadFirstName?: string;
   /** Lead title, if available */

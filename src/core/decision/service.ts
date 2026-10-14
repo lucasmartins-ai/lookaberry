@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/client.js';
 import { evaluate } from './engine.js';
 import { HASH_EMBEDDING_MODEL } from '../icp/embeddings.js';
+import { applyChannelPriors, getChannelPriors } from '../learning/service.js';
 import type { DecisionContext, EvaluateOpportunityInput, EvaluateOpportunityOutput, NormalizedDecisionSignal, DecisionEvidence } from './types.js';
 
 function signalRowToDecisionSignal(row: {
@@ -77,8 +78,20 @@ export class DecisionService {
       evaluated.push(...contexts);
     }
 
+    // Phase 2: reorder channels by what has actually converted for this segment.
+    const scored = await Promise.all(evaluated.map(async ctx => {
+      const score = evaluate(ctx, now);
+      if (!ctx.segment) return score;
+      try {
+        return applyChannelPriors(score, await getChannelPriors(ctx.segment), ctx.segment);
+      } catch (err) {
+        console.warn('[Decision] channel priors unavailable:', err instanceof Error ? err.message : String(err));
+        return score;
+      }
+    }));
+
     return {
-      evaluated: evaluated.map(ctx => evaluate(ctx, now)),
+      evaluated: scored,
       evaluated_at: now.toISOString(),
       total_candidates: evaluated.length,
     };
@@ -166,7 +179,7 @@ export class DecisionService {
   ): Promise<DecisionContext | null> {
     const lead = await prisma.lead.findUnique({
       where: { id: leadId },
-      select: { id: true, companyId: true, firstName: true, title: true, seniority: true, company: { select: { name: true } } },
+      select: { id: true, companyId: true, firstName: true, title: true, seniority: true, company: { select: { name: true, industry: true } } },
     });
 
     if (!lead) throw new Error(`Lead not found: ${leadId}`);
@@ -181,6 +194,7 @@ export class DecisionService {
       leadId: lead.id,
       companyId: lead.companyId,
       companyName: lead.company.name,
+      segment: lead.company.industry ?? undefined,
       icpFit,
       leadFirstName: lead.firstName ?? undefined,
       leadTitle: lead.title,
@@ -198,7 +212,7 @@ export class DecisionService {
   ): Promise<DecisionContext | null> {
     const company = await prisma.company.findUnique({
       where: { id: companyId },
-      select: { name: true },
+      select: { name: true, industry: true },
     });
 
     if (!company) throw new Error(`Company not found: ${companyId}`);
@@ -212,6 +226,7 @@ export class DecisionService {
     return {
       companyId,
       companyName: company.name,
+      segment: company.industry ?? undefined,
       icpFit,
       signals,
       evidence,
@@ -225,7 +240,7 @@ export class DecisionService {
   ): Promise<DecisionContext[]> {
     const leads = await prisma.lead.findMany({
       where: { status: { in: ['DISCOVERED', 'ENRICHED', 'READY'] } },
-      select: { id: true, companyId: true, firstName: true, title: true, seniority: true, company: { select: { name: true, id: true } } },
+      select: { id: true, companyId: true, firstName: true, title: true, seniority: true, company: { select: { name: true, id: true, industry: true } } },
       take: 50,
     });
 
@@ -242,6 +257,7 @@ export class DecisionService {
           leadId: lead.id,
           companyId: lead.companyId,
           companyName: lead.company.name,
+          segment: lead.company.industry ?? undefined,
           icpFit,
           leadFirstName: lead.firstName ?? undefined,
           leadTitle: lead.title,

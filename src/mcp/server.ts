@@ -7,6 +7,7 @@ import { registerOutreachTool } from './tools/outreach.js';
 import { registerAnalyticsTools } from './tools/analytics.js';
 import { registerDecisionTool } from './tools/decision.js';
 import { registerWhatsAppTool } from './tools/whatsapp.js';
+import { registerInsightsTool } from './tools/insights.js';
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -22,6 +23,7 @@ export function createMcpServer(): McpServer {
   registerAnalyticsTools(server);
   registerDecisionTool(server);
   registerWhatsAppTool(server);
+  registerInsightsTool(server);
 
   return server;
 }
