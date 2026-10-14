@@ -27,6 +27,7 @@ describe('embedding model labelling', () => {
   it.skipIf(Boolean(config.OPENAI_API_KEY || config.EMBEDDINGS_BASE_URL))('works with no API at all: local lexical embeddings', async () => {
     const { embedding, model } = await generateEmbeddingWithModel('B2B dental clinic in London');
     expect(model).toBe(LEXICAL_EMBEDDING_MODEL);
+    expect(model).toBe('lexical-v2');
     expect(embedding).toHaveLength(1536);
   });
 
@@ -37,6 +38,15 @@ describe('embedding model labelling', () => {
     const saas = generateLexicalEmbedding('B2B SaaS platform for DevOps observability and Kubernetes monitoring');
     expect(cos(icp, dental)).toBeGreaterThan(0.3);
     expect(cos(icp, dental)).toBeGreaterThan(cos(icp, saas) + 0.2);
+  });
+
+  it('crosses pt/en through the concept map (no API, no translation)', () => {
+    const cos = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i]!, 0);
+    const icpEn = generateLexicalEmbedding('Dental clinics and physiotherapy practices: online booking, WhatsApp customer service automation');
+    const clinicPt = generateLexicalEmbedding('Clínica odontológica em Goiânia com agendamento pelo WhatsApp e atendimento ao paciente');
+    const aiTool = generateLexicalEmbedding('AI developer tools platform for code generation and LLM evaluation');
+    expect(cos(icpEn, clinicPt)).toBeGreaterThan(0.25);
+    expect(cos(icpEn, clinicPt)).toBeGreaterThan(cos(icpEn, aiTool) + 0.15);
   });
 });
 

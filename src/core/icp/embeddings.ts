@@ -17,7 +17,7 @@ import crypto from 'crypto';
 
 export const EMBEDDING_DIMENSION = 1536;
 export const SEMANTIC_EMBEDDING_MODEL = 'text-embedding-3-small';
-export const LEXICAL_EMBEDDING_MODEL = 'lexical-v1';
+export const LEXICAL_EMBEDDING_MODEL = 'lexical-v2';
 /** Legacy random fallback; vectors with this label are never compared for ICP fit. */
 export const HASH_EMBEDDING_MODEL = 'hash-sha256-v1';
 
@@ -46,15 +46,51 @@ export function generateDeterministicEmbedding(text: string, dimensions = EMBEDD
 const STOPWORDS = new Set((
   'a an and are as at be by for from has have in is it its of on or that the this to was were will with we you your our ' +
   'de da do das dos e em no na nos nas o os as um uma para por com que se ao aos sua seu suas seus mais como ' +
-  'el la los las y en un una por con del al su'
+  'el la los las y en un una por con del al su ' +
+  // contact-card / address boilerplate (scraped listings): carries no business meaning
+  'localizacao location endereco address telefone phone tel comercial categoria nicho category niche ' +
+  'av avenida rua street st road rd cep postcode zip centro brasil brazil uk'
 ).split(' '));
+
+/**
+ * pt/en (and some es) concept map: words for the same business concept collapse to one token,
+ * so "clínica odontológica" (pt) and "dental clinic" (en) land close without any API.
+ * Order matters: first match wins. Patterns run on lowercased, accent-stripped tokens.
+ */
+const CONCEPTS: Array<[string, RegExp]> = [
+  ['dental', /^(odont|dent[aie]|dentist|ortodont|orthodont)/],
+  ['clinic', /^(clinic|clinica|consultorio|practice$|practices$)/],
+  ['physio', /^(fisio|physio|osteopat|quiropra|chiropract)/],
+  ['vet', /^(vet$|vets$|veterin|petshop|pet$|pets$)/],
+  ['health', /^(saude|health|medic|hospital)/],
+  ['beauty', /^(estetic|aesthetic|beauty|beleza|salao|salon|spa$)/],
+  ['barber', /^barb/],
+  ['booking', /^(agend|booking|appointment|schedul|marcac|reserva|reservation|agenda$)/],
+  ['customer_service', /^(atendiment|recepc|reception|frontdesk|suporte|support$)/],
+  ['messaging', /^(whatsapp|mensag|messag|sms$|chat$|chats$|dm$)/],
+  ['automation', /^(automac|automat|automatiz)/],
+  ['software', /^(software|sistema|system|plataforma|platform|aplicativo|app$|apps$)/],
+  ['ai', /^(ia$|ai$|inteligencia|intelligence|llm|gpt)/],
+  ['sales', /^(venda|sales$|sale$|vendedor|comercial|commercial|selling)/],
+  ['real_estate', /^(imobiliar|imovel|imoveis|corretor|realtor|realestate|broker|property|properties)/],
+  ['client', /^(client|cliente|paciente|patient|customer)/],
+  ['education', /^(curso|course|aula|lesson|educac|education|escola|school)/],
+  ['website', /^(site$|sites$|website)/],
+  ['team', /^(equipe|team)/],
+];
+
+function concept(token: string): string {
+  for (const [name, pattern] of CONCEPTS) if (pattern.test(token)) return name;
+  return token;
+}
 
 function tokens(text: string): string[] {
   return text
     .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .split(/[^a-z0-9]+/)
-    .filter(t => t.length >= 2 && !STOPWORDS.has(t));
+    .filter(t => t.length >= 2 && !STOPWORDS.has(t) && !/\d/.test(t)) // numbers: phones, CEPs, street numbers
+    .map(concept);
 }
 
 function fnv1a(s: string): number {
@@ -66,13 +102,17 @@ function fnv1a(s: string): number {
   return h >>> 0;
 }
 
-/** Local lexical embedding: hashed unigrams + bigrams, sublinear tf, signed, L2-normalized. */
+/** Local lexical embedding: hashed concept-mapped unigrams + unordered bigrams, sublinear tf, signed, L2-normalized. */
 export function generateLexicalEmbedding(text: string, dimensions = EMBEDDING_DIMENSION): number[] {
   const words = tokens(text);
   const counts = new Map<string, number>();
   words.forEach((w, i) => {
     counts.set(w, (counts.get(w) ?? 0) + 1);
-    if (i > 0) counts.set(`${words[i - 1]}_${w}`, (counts.get(`${words[i - 1]}_${w}`) ?? 0) + 0.5);
+    if (i > 0) {
+      // order-insensitive bigram: "clínica odontológica" (pt) and "dental clinic" (en) share it
+      const pair = [words[i - 1]!, w].sort().join('_');
+      counts.set(pair, (counts.get(pair) ?? 0) + 0.5);
+    }
   });
   const vector = new Array(dimensions).fill(0);
   for (const [term, tf] of counts) {

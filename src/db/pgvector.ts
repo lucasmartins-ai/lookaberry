@@ -48,8 +48,9 @@ export async function setCompanyEmbedding(companyId: string, embedding: number[]
 }
 
 /**
- * Set when missing; replace legacy/unknown vectors; upgrade to a different semantic model.
- * Never downgrade: hash never replaces anything, lexical never replaces a semantic vector.
+ * Set when missing; replace legacy/unknown/older-lexical vectors; upgrade to a different
+ * semantic model. Never downgrade: hash never replaces anything, lexical never replaces a
+ * semantic vector.
  */
 export async function setCompanyEmbeddingIfMissing(companyId: string, embedding: number[], model = HASH_EMBEDDING_MODEL): Promise<void> {
   await prisma.$executeRawUnsafe(
@@ -57,7 +58,7 @@ export async function setCompanyEmbeddingIfMissing(companyId: string, embedding:
       WHERE id = $2::uuid
         AND (
           embedding IS NULL
-          OR (embedding_model IS NULL OR embedding_model = $4) AND $3 <> $4
+          OR (embedding_model IS NULL OR embedding_model = $4 OR embedding_model LIKE 'lexical-%') AND $3 <> $4
           OR embedding_model IS DISTINCT FROM $3 AND $3 NOT IN ($4, $5)
         )`,
     vectorToString(embedding),
