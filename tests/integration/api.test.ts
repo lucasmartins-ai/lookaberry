@@ -49,6 +49,14 @@ describe('Fastify REST API Integration', () => {
         website_url: 'https://github.com',
         description: 'Developer collaboration and code hosting platform',
         target_geos: ['US', 'LATAM', 'EU'],
+        // Agent mode: the calling agent submits the analysis it wrote from the brief.
+        analysis: {
+          company_name: 'GitHub',
+          company_summary: 'Code hosting and collaboration platform for developers and engineering teams.',
+          target_personas: [{ title: 'VP Engineering', seniority: 'VP', core_pain: 'Coordinating code review across many teams' }],
+          value_propositions: ['Single place for code, reviews and CI'],
+          target_industries: ['B2B SaaS'],
+        },
       },
     });
 

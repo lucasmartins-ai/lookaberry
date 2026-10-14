@@ -1,13 +1,25 @@
 import { prisma } from '../../db/client.js';
 import { setIcpProfileEmbedding } from '../../db/pgvector.js';
 import { scrapeWebsite } from './scraper.js';
-import { analyzeIcpContent, IcpAnalysisResult } from './analyzer.js';
+import { analyzeIcpContent, buildIcpUserPrompt, ICP_SYSTEM_PROMPT, normalizeAnalysisResult, reduceContent, IcpAnalysisResult } from './analyzer.js';
+import { serverLlm } from '../llm/complete.js';
 import { generateEmbeddingWithModel } from './embeddings.js';
 
 export interface AnalyzeIcpParams {
   website_url: string;
   description?: string;
   target_geos?: string[];
+  /** ICP analysis written by the calling agent (agent mode); persisted as-is after normalization. */
+  analysis?: Partial<IcpAnalysisResult>;
+}
+
+/** Agent mode: everything the calling agent needs to analyze the site itself. */
+export interface IcpAgentBrief {
+  mode: 'agent';
+  website_url: string;
+  system: string;
+  prompt: string;
+  next_step: string;
 }
 
 export interface AnalyzeIcpResponse {
@@ -25,19 +37,31 @@ export class IcpService {
   /**
    * Complete ICP analysis pipeline: Scraping -> Analysis -> Embedding -> DB Storage
    */
-  async analyzeIcp(params: AnalyzeIcpParams): Promise<AnalyzeIcpResponse> {
+  async analyzeIcp(params: AnalyzeIcpParams): Promise<AnalyzeIcpResponse | IcpAgentBrief> {
     const { website_url, description, target_geos } = params;
 
-    // 1. Scrape Website with LookaCrawler pipeline
-    const scraped = await scrapeWebsite(website_url);
+    let analysis: IcpAnalysisResult;
+    if (params.analysis) {
+      // The calling agent already analyzed the site.
+      analysis = normalizeAnalysisResult(params.analysis, website_url, description);
+    } else {
+      // 1. Scrape Website with LookaCrawler pipeline
+      const scraped = await scrapeWebsite(website_url);
 
-    // 2. Analyze content and extract ICP & Personas
-    const analysis: IcpAnalysisResult = await analyzeIcpContent(
-      scraped.markdown,
-      website_url,
-      description,
-      target_geos
-    );
+      // Agent-first: without a server LLM, hand the reduced page to the calling agent.
+      if (!serverLlm()) {
+        return {
+          mode: 'agent',
+          website_url,
+          system: ICP_SYSTEM_PROMPT,
+          prompt: buildIcpUserPrompt(reduceContent(scraped.markdown, 6000), website_url, description, target_geos),
+          next_step: 'Analyze the content yourself following `system`, then call gtm_analyze_icp again with the same website_url and analysis=<that JSON> to save the ICP.',
+        };
+      }
+
+      // 2. Analyze content and extract ICP & Personas (server LLM)
+      analysis = await analyzeIcpContent(scraped.markdown, website_url, description, target_geos);
+    }
 
     // 3. Generate 1536-dim embedding for vector search
     const embeddingText = `Company: ${analysis.company_name}

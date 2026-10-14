@@ -8,7 +8,7 @@ export function createIcpWorker() {
     async (job: Job<AnalyzeIcpParams>) => {
       console.log(`[ICP Worker] Processing job ${job.id} for ${job.data.website_url}`);
       const result = await icpService.analyzeIcp(job.data);
-      console.log(`[ICP Worker] Completed job ${job.id} -> ICP ID: ${result.icp_id}`);
+      console.log(`[ICP Worker] Completed job ${job.id} -> ${'icp_id' in result ? `ICP ID: ${result.icp_id}` : 'agent brief (no server LLM; the agent must submit the analysis)'}`);
       return result;
     },
     {

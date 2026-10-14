@@ -1,10 +1,9 @@
 /**
  * One reply classifier for every channel (email, LinkedIn, WhatsApp, MCP feedback).
- * LLM when ANTHROPIC_API_KEY is set; otherwise a word-boundary heuristic (pt/en/es).
+ * Local word-boundary heuristic (pt/en/es) by default; a server LLM only when LLM_MODE=server.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
-import { config } from '../../config/env.js';
+import { completeText, parseJsonObject } from '../llm/complete.js';
 
 export const REPLY_INTENTS = [
   'INTERESTED', 'MEETING', 'QUESTION', 'OBJECTION_PRICE', 'NOT_NOW',
@@ -20,7 +19,7 @@ export interface ReplyClassification {
   source: 'llm' | 'heuristic';
 }
 
-const SENTIMENT_BY_INTENT: Record<ReplyIntent, ReplySentiment> = {
+export const SENTIMENT_BY_INTENT: Record<ReplyIntent, ReplySentiment> = {
   INTERESTED: 'POSITIVE',
   MEETING: 'POSITIVE',
   QUESTION: 'NEUTRAL',
@@ -66,29 +65,15 @@ const SYSTEM = `You classify replies to B2B outreach messages (any language). Re
 - MEETING: proposes or accepts a call/meeting. INTERESTED: positive, wants more information.
 - AUTO_REPLY: out-of-office or automatic response. Be conservative with confidence.`;
 
+/** Server LLM when configured (LLM_MODE=server); otherwise the local heuristic. Agents can also pass their own intent. */
 export async function classifyReply(content: string): Promise<ReplyClassification> {
   const fallback = classifyReplyHeuristic(content);
-  const apiKey = config.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || !content.trim()) return fallback;
-
-  try {
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: config.ANTHROPIC_MODEL,
-      max_tokens: 2000, // room for adaptive thinking on current models
-      system: SYSTEM,
-      messages: [{ role: 'user', content: content.slice(0, 4000) }],
-    });
-    const text = response.content.find(block => block.type === 'text');
-    const json = text && text.type === 'text' ? text.text.match(/\{[\s\S]*\}/)?.[0] : undefined;
-    if (!json) return fallback;
-    const parsed = JSON.parse(json) as { intent?: string; confidence?: number };
-    const intent = REPLY_INTENTS.find(i => i === parsed.intent);
-    if (!intent) return fallback;
-    const confidence = Math.max(0, Math.min(100, Number(parsed.confidence ?? 0)));
-    return { intent, sentiment: SENTIMENT_BY_INTENT[intent], confidence, source: 'llm' };
-  } catch (err) {
-    console.warn('[ReplyClassifier] LLM classification failed, using heuristic:', err instanceof Error ? err.message : String(err));
-    return fallback;
-  }
+  if (!content.trim()) return fallback;
+  const parsed = parseJsonObject<{ intent?: string; confidence?: number }>(
+    await completeText({ system: SYSTEM, prompt: content.slice(0, 4000), maxTokens: 2000 }),
+  );
+  const intent = REPLY_INTENTS.find(i => i === parsed?.intent);
+  if (!intent) return fallback;
+  const confidence = Math.max(0, Math.min(100, Number(parsed?.confidence ?? 0)));
+  return { intent, sentiment: SENTIMENT_BY_INTENT[intent], confidence, source: 'llm' };
 }

@@ -1,6 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
-import { config } from '../../config/env.js';
+import { completeText, parseJsonObject } from '../llm/complete.js';
 import { jevEvaluate, isJevEnabled } from '../intelligence/typesafe.js';
 
 export interface PersonaAnalysis {
@@ -38,7 +36,7 @@ export interface IcpAnalysisResult {
   };
 }
 
-const SYSTEM_PROMPT = `You are an elite B2B Go-To-Market (GTM) Strategist. 
+export const ICP_SYSTEM_PROMPT = `You are an elite B2B Go-To-Market (GTM) Strategist. 
 Analyze the provided company website content and extract an Ideal Customer Profile (ICP).
 
 Return ONLY valid JSON matching this exact structure:
@@ -239,68 +237,18 @@ export async function analyzeIcpContent(
     assessment.provider === 'typesafe-jev'
       ? `\nJev pre-analysis: industry family "${assessment.industryFamily}", B2B probability ${assessment.b2bFocus.toFixed(2)}. Use this to inform target_personas and target_industries.`
       : '';
-  const userPrompt = `Analyze this company website content and extract the ICP:
-URL: ${websiteUrl}
-Additional Context/Description: ${description || 'None provided'}
-Target Geos: ${targetGeos ? targetGeos.join(', ') : 'Global / Any'}${jevHint}
+  const userPrompt = buildIcpUserPrompt(contentSnippet, websiteUrl, description, targetGeos) + jevHint;
 
-WEBSITE CONTENT:
-${contentSnippet}`;
-
-  // 1. Try Anthropic (config.ANTHROPIC_MODEL)
-  if (config.ANTHROPIC_API_KEY) {
-    try {
-      const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-      const response = await anthropic.messages.create({
-        model: config.ANTHROPIC_MODEL,
-        // Room for adaptive thinking (on by default in current models); sampling params are rejected there.
-        max_tokens: 8000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userPrompt }],
-      });
-
-      const textBlock = response.content.find(c => c.type === 'text');
-      if (textBlock && textBlock.type === 'text') {
-        const jsonMatch = textBlock.text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]) as IcpAnalysisResult;
-          return { ...normalizeAnalysisResult(parsed, websiteUrl, description), jev_meta: meta };
-        }
-      }
-    } catch (err: any) {
-      console.warn(`Anthropic ICP analysis failed: ${err.message}. Trying OpenAI/fallback...`);
-    }
-  }
-
-  // 2. Try OpenAI
-  if (config.OPENAI_API_KEY) {
-    try {
-      const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-      });
-
-      const content = completion.choices[0]?.message?.content;
-      if (content) {
-        const parsed = JSON.parse(content) as IcpAnalysisResult;
-        return { ...normalizeAnalysisResult(parsed, websiteUrl, description), jev_meta: meta };
-      }
-    } catch (err: any) {
-      console.warn(`OpenAI ICP analysis failed: ${err.message}. Using heuristic fallback...`);
-    }
-  }
+  // Server LLM only when LLM_MODE=server (agent mode never reaches here: IcpService hands the
+  // analysis to the calling agent instead).
+  const parsed = parseJsonObject<IcpAnalysisResult>(await completeText({ system: ICP_SYSTEM_PROMPT, prompt: userPrompt, maxTokens: 8000 }));
+  if (parsed) return { ...normalizeAnalysisResult(parsed, websiteUrl, description), jev_meta: meta };
 
   // 3. Fallback Heuristic
   return { ...heuristicAnalysis(markdown, websiteUrl, description), jev_meta: meta };
 }
 
-function normalizeAnalysisResult(raw: Partial<IcpAnalysisResult>, url: string, description?: string): IcpAnalysisResult {
+export function normalizeAnalysisResult(raw: Partial<IcpAnalysisResult>, url: string, description?: string): IcpAnalysisResult {
   const fallback = heuristicAnalysis('', url, description);
   
   return {
@@ -330,4 +278,15 @@ function normalizeAnalysisResult(raw: Partial<IcpAnalysisResult>, url: string, d
       ? raw.tech_stack_keywords
       : fallback.tech_stack_keywords,
   };
+}
+
+/** The user prompt for ICP analysis (server LLM or the calling agent in agent mode). */
+export function buildIcpUserPrompt(content: string, websiteUrl: string, description?: string, targetGeos?: string[]): string {
+  return `Analyze this company website content and extract the ICP:
+URL: ${websiteUrl}
+Additional Context/Description: ${description || 'None provided'}
+Target Geos: ${targetGeos ? targetGeos.join(', ') : 'Global / Any'}
+
+WEBSITE CONTENT:
+${content}`;
 }

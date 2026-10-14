@@ -246,6 +246,19 @@ npm run dev
 
 ---
 
+## 🤖 Agent-First: No LLM API Required
+
+LookaBerry is a tool for **your** agent (Claude Code, Hermes, Codex, Cursor…). By default (`LLM_MODE=agent`) the server never calls an LLM API:
+
+| Step | Agent mode (default) | Optional server mode |
+|---|---|---|
+| ICP analysis (`gtm_analyze_icp`) | Returns the reduced page + output format; your agent analyzes it and calls the tool again with `analysis` to save | `LLM_MODE=server` + `ANTHROPIC_API_KEY`, or any OpenAI-compatible `LLM_BASE_URL` + `LLM_MODEL` |
+| Messages (`gtm_generate_hyper_personalized_message`) | Returns a brief (lead, signal, conversation memory, facts, limits); your agent writes it and calls again with `draft` — LookaBerry validates guardrails and repetition | same |
+| Reply classification | Local pt/en/es heuristic, or the `intent` your agent passes to `gtm_record_lead_interaction_feedback` / `POST /api/v1/events` | same |
+| Embeddings (ICP fit, lookalikes) | Local lexical embeddings, no network | `EMBEDDINGS_BASE_URL` + `EMBEDDINGS_MODEL` (LM Studio, Ollama, MLX, OpenRouter…) or `OPENAI_API_KEY` |
+
+After switching embedding providers, run `npx tsx scripts/reembed.ts` so ICPs and companies share one model.
+
 ## 🔌 Connecting to AI Agents
 
 LookaBerry is built **AI-Native** and connects seamlessly to any coding agent:

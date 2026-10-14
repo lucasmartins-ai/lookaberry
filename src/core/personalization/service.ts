@@ -1,6 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '../../db/client.js';
-import { config } from '../../config/env.js';
+import { completeText, parseJsonObject, serverLlm } from '../llm/complete.js';
 import type { GenerateHyperPersonalizedMessageInput, GenerateHyperPersonalizedMessageOutput } from '../../mcp/schemas/personalization.js';
 
 const STATIC_PROMPT = `You write concise B2B outbound messages. Use only facts in the user payload. Never invent company details, results, metrics, customers, or shared context. Start from the active signal and connect it to the lead's role. Avoid generic AI copy and spam language. Return JSON only with: subject (string or null), body (string), hook_used (string). Keep LinkedIn connection requests under 300 characters, LinkedIn messages under 700 characters, and emails under 120 words.`;
@@ -67,21 +66,14 @@ const prismaRepository: PersonalizationRepository = {
   },
 };
 
-const anthropicGenerator: MessageGenerator = {
+/** Server-side generation (LLM_MODE=server). In agent mode the calling agent writes instead. */
+const serverGenerator: MessageGenerator = {
   async generate({ system, prompt, channel }) {
-    const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-    const response = await client.messages.create({
-      model: config.ANTHROPIC_MODEL,
-      // Room for adaptive thinking (on by default in current models); sampling params are rejected there.
-      max_tokens: 2000,
-      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: `Channel: ${channel}\n${prompt}` }],
-    });
-    const text = response.content.find(block => block.type === 'text');
-    if (!text || text.type !== 'text') throw new Error('Anthropic returned no text response');
-    const json = text.text.match(/\{[\s\S]*\}/)?.[0];
-    if (!json) throw new Error('Anthropic returned invalid JSON');
-    return JSON.parse(json) as { subject?: string | null; body: string; hook_used: string };
+    const parsed = parseJsonObject<{ subject?: string | null; body: string; hook_used: string }>(
+      await completeText({ system, prompt: `Channel: ${channel}\n${prompt}`, maxTokens: 2000 }),
+    );
+    if (!parsed?.body) throw new Error('Server LLM returned no usable message');
+    return parsed;
   },
 };
 
@@ -130,17 +122,52 @@ export function applyMessageGuardrails(output: { subject?: string | null; body: 
   return { subject: output.subject?.trim() || undefined, body, hook_used: output.hook_used.trim(), estimated_tokens_used: Math.ceil(text.length / 4) };
 }
 
+const CHANNEL_LIMITS = { LINKEDIN_CONNECT: 300, LINKEDIN_MESSAGE: 700, EMAIL: 800 } as const;
+
+/** What the calling agent needs to write the message itself (agent mode). */
+export interface AgentBrief {
+  mode: 'agent';
+  system: string;
+  payload: unknown;
+  channel: GenerateHyperPersonalizedMessageInput['channel'];
+  max_body_chars: number;
+  banned_terms: string;
+  next_step: string;
+}
+
 export interface PersonalizationDependencies { repository?: PersonalizationRepository; generator?: MessageGenerator; }
 
 export class HyperPersonalizationService {
   private readonly repository: PersonalizationRepository;
-  private readonly generator: MessageGenerator;
-  constructor(dependencies: PersonalizationDependencies = {}) { this.repository = dependencies.repository ?? prismaRepository; this.generator = dependencies.generator ?? anthropicGenerator; }
-  async generateMessage(input: GenerateHyperPersonalizedMessageInput): Promise<GenerateHyperPersonalizedMessageOutput> {
+  private readonly generator: MessageGenerator | null;
+  constructor(dependencies: PersonalizationDependencies = {}) {
+    this.repository = dependencies.repository ?? prismaRepository;
+    this.generator = dependencies.generator ?? (serverLlm() ? serverGenerator : null);
+  }
+
+  /**
+   * Agent-first: with `draft` (written by the calling agent) → validate and return it;
+   * with a server LLM → generate; otherwise → return the brief so the agent writes it.
+   */
+  async generateMessage(input: GenerateHyperPersonalizedMessageInput): Promise<GenerateHyperPersonalizedMessageOutput | AgentBrief> {
     const context = await this.repository.getContext(input.lead_id, input.signal_id);
     const prompt = buildDynamicPrompt(context, input);
-    const message = applyMessageGuardrails(await this.generator.generate({ system: STATIC_PROMPT, prompt, channel: input.channel }), input.channel);
-    if (repeatsPreviousMessage(message.body, context?.memory)) throw new Error('Generated message repeats a message already sent to this lead');
+
+    if (!input.draft && !this.generator) {
+      return {
+        mode: 'agent',
+        system: STATIC_PROMPT,
+        payload: JSON.parse(prompt),
+        channel: input.channel,
+        max_body_chars: CHANNEL_LIMITS[input.channel],
+        banned_terms: BANNED_TERMS.source,
+        next_step: 'Write the message yourself from this payload, then call gtm_generate_hyper_personalized_message again with the same lead_id/channel and draft={subject, body, hook_used} to validate it.',
+      };
+    }
+
+    const raw = input.draft ?? await this.generator!.generate({ system: STATIC_PROMPT, prompt, channel: input.channel });
+    const message = applyMessageGuardrails(raw, input.channel);
+    if (repeatsPreviousMessage(message.body, context?.memory)) throw new Error('Message repeats one already sent to this lead');
     return message;
   }
 }

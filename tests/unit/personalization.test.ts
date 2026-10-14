@@ -15,6 +15,8 @@ describe('Hyper-personalization', () => {
     });
 
     const result = await service.generateMessage(input);
+
+    if ('mode' in result) throw new Error('expected a generated message, got an agent brief');
     expect(result.body).toContain('Acme abriu');
     expect(result.hook_used).toContain('Nova vaga');
     expect(result.estimated_tokens_used).toBeGreaterThan(0);
@@ -56,7 +58,26 @@ describe('Hyper-personalization', () => {
         repository: { getContext: async () => ({ lead, signal: null, memory }) },
         generator: { generate: async () => ({ body: sent.body, hook_used: 'Vaga' }) },
       });
-      await expect(service.generateMessage(input)).rejects.toThrow('repeats a message');
+      await expect(service.generateMessage(input)).rejects.toThrow('repeats one already sent');
+    });
+  });
+
+  describe('agent mode (no server LLM, the default)', () => {
+    const repository = { getContext: async () => ({ lead: { firstName: 'Ana', title: 'VP Sales', companyName: 'Acme' }, signal: { summary: 'Acme abriu uma vaga de VP Sales', title: 'Nova vaga', signalType: 'HIRING' } }) };
+
+    it('returns a brief for the calling agent instead of calling an API', async () => {
+      const result = await new HyperPersonalizationService({ repository }).generateMessage(input);
+      expect(result).toMatchObject({ mode: 'agent', channel: 'LINKEDIN_MESSAGE', max_body_chars: 700 });
+      if (!('mode' in result)) throw new Error('expected a brief');
+      expect((result.payload as any).active_signal.summary).toContain('Acme abriu');
+      expect(result.next_step).toContain('draft=');
+    });
+
+    it("validates the agent's draft with the same guardrails", async () => {
+      const service = new HyperPersonalizationService({ repository });
+      const ok = await service.generateMessage({ ...input, draft: { body: 'Ana, vi a vaga de VP Sales na Acme. Como vocês estruturam o time hoje?', hook_used: 'vaga VP Sales' } });
+      expect(ok).toMatchObject({ hook_used: 'vaga VP Sales' });
+      await expect(service.generateMessage({ ...input, draft: { body: 'Unlock a seamless pipeline', hook_used: 'x' } })).rejects.toThrow('blocked');
     });
   });
 });

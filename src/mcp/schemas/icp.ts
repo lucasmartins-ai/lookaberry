@@ -4,6 +4,7 @@ export const AnalyzeIcpInputSchema = z.object({
   website_url: z.string().describe('URL principal da empresa/produto (ex: https://example.com)'),
   description: z.string().optional().describe('Resumo opcional da tese de produto ou contexto adicional'),
   target_geos: z.array(z.string()).optional().describe("Regiões geográficas alvo (ex: ['BR', 'US', 'LATAM'])"),
+  analysis: z.record(z.unknown()).optional().describe('ICP analysis produced by the calling agent (agent mode)'),
 });
 
 export const TargetPersonaSchema = z.object({

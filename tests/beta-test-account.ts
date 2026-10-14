@@ -215,6 +215,7 @@ async function runBetaTest() {
       channel: ch,
       tone: 'DIRECT_PEER',
     });
+    if ('mode' in msg) throw new Error('expected a generated message, got an agent brief');
     generatedMessages.push({
       channel: ch,
       subject: msg.subject,

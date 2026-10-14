@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { REPLY_INTENTS } from '../../core/analytics/replyClassifier.js';
 
 export const InteractionTypeSchema = z.enum(['OPEN', 'CLICK', 'REPLY', 'BOUNCE']);
 export const FeedbackSentimentSchema = z.enum(['POSITIVE', 'NEGATIVE', 'NEUTRAL', 'AMBIGUOUS']);
@@ -17,6 +18,8 @@ export const RecordLeadInteractionFeedbackInputSchema = z.object({
   content: z.string().trim().max(50000).optional(),
   provider: z.string().trim().max(100).optional(),
   sentiment: FeedbackSentimentSchema.optional(),
+  /** The calling agent's own reading of a reply (preferred over the server heuristic). */
+  intent: z.enum(REPLY_INTENTS).optional(),
   confidence: z.number().min(0).max(100).optional(),
 });
 

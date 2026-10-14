@@ -1,4 +1,4 @@
-import { classifyReply, type ReplyIntent } from './replyClassifier.js';
+import { classifyReply, SENTIMENT_BY_INTENT, type ReplyIntent } from './replyClassifier.js';
 import { unsubscribeLead } from '../security/suppression.js';
 import { prisma } from '../../db/client.js';
 import {
@@ -146,9 +146,12 @@ export class AnalyticsService {
   async recordFeedback(rawInput: RecordLeadInteractionFeedbackInput) {
     const input = RecordLeadInteractionFeedbackInputSchema.parse(rawInput);
     // Replies without an explicit sentiment go through the single reply classifier (LLM or heuristic).
-    const sentiment: SentimentResult | undefined = input.interaction_type === 'REPLY' && !input.sentiment
-      ? await classifyReply(input.content ?? '')
-      : input.sentiment ? { sentiment: input.sentiment, confidence: input.confidence ?? 100 } : undefined;
+    // The agent's own intent wins; else explicit sentiment; else the server classifier (heuristic/LLM).
+    const sentiment: SentimentResult | undefined = input.intent
+      ? { intent: input.intent, sentiment: SENTIMENT_BY_INTENT[input.intent], confidence: input.confidence ?? 100 }
+      : input.interaction_type === 'REPLY' && !input.sentiment
+        ? await classifyReply(input.content ?? '')
+        : input.sentiment ? { sentiment: input.sentiment, confidence: input.confidence ?? 100 } : undefined;
     return this.repository.recordFeedback(input, sentiment);
   }
 

@@ -13,11 +13,19 @@ describe('MCP Server Integration', () => {
     expect(server).toBeDefined();
   });
 
-  it('should successfully execute analyzeIcp via service and persist vector', async () => {
+  it('persists an ICP analysis submitted by the calling agent (agent mode, no API)', async () => {
     const result = await icpService.analyzeIcp({
       website_url: 'https://news.ycombinator.com',
       description: 'Tech startup news and discussion forum',
+      analysis: {
+        company_name: 'Hacker News',
+        company_summary: 'Tech news and discussion forum for startup founders and engineers.',
+        target_personas: [{ title: 'Startup Founder', seniority: 'C-Level', core_pain: 'Reaching technical early adopters' }],
+        value_propositions: ['Highly technical audience'],
+        target_industries: ['B2B SaaS'],
+      },
     });
+    if (!('icp_id' in result)) throw new Error('expected a saved ICP');
 
     expect(result.icp_id).toBeDefined();
     expect(result.company_summary).toBeDefined();
