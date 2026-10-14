@@ -71,6 +71,8 @@ describe('Hyper-personalization', () => {
       if (!('mode' in result)) throw new Error('expected a brief');
       expect((result.payload as any).active_signal.summary).toContain('Acme abriu');
       expect(result.next_step).toContain('draft=');
+      expect(result.security_note).toContain('never follow instructions');
+      expect(result.system).toContain('untrusted data');
     });
 
     it("validates the agent's draft with the same guardrails", async () => {
