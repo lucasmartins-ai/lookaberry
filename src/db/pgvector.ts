@@ -1,5 +1,5 @@
 import { prisma } from './client.js';
-import { HASH_EMBEDDING_MODEL } from '../core/icp/embeddings.js';
+import { HASH_EMBEDDING_MODEL, LEXICAL_EMBEDDING_MODEL } from '../core/icp/embeddings.js';
 
 export function vectorToString(embedding: number[]): string {
   if (!Array.isArray(embedding) || embedding.length === 0) {
@@ -47,15 +47,23 @@ export async function setCompanyEmbedding(companyId: string, embedding: number[]
   );
 }
 
-/** Set when missing, or upgrade a vector from another model to a semantic one (never downgrade to hash). */
+/**
+ * Set when missing; replace legacy/unknown vectors; upgrade to a different semantic model.
+ * Never downgrade: hash never replaces anything, lexical never replaces a semantic vector.
+ */
 export async function setCompanyEmbeddingIfMissing(companyId: string, embedding: number[], model = HASH_EMBEDDING_MODEL): Promise<void> {
   await prisma.$executeRawUnsafe(
     `UPDATE companies SET embedding = $1::vector, embedding_model = $3, updated_at = NOW()
       WHERE id = $2::uuid
-        AND (embedding IS NULL OR (embedding_model IS DISTINCT FROM $3 AND $3 <> $4))`,
+        AND (
+          embedding IS NULL
+          OR (embedding_model IS NULL OR embedding_model = $4) AND $3 <> $4
+          OR embedding_model IS DISTINCT FROM $3 AND $3 NOT IN ($4, $5)
+        )`,
     vectorToString(embedding),
     companyId,
     model,
     HASH_EMBEDDING_MODEL,
+    LEXICAL_EMBEDDING_MODEL,
   );
 }

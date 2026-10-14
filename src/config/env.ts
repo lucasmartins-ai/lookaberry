@@ -19,6 +19,17 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional().default(''),
   ANTHROPIC_MODEL: z.string().default('claude-haiku-5-5'),
   OPENAI_API_KEY: z.string().optional().default(''),
+  // Agent-first: by default no LLM API is called; MCP tools hand the work to the calling agent.
+  // 'server' uses ANTHROPIC_API_KEY or an OpenAI-compatible LLM_BASE_URL if one is configured.
+  LLM_MODE: z.enum(['agent', 'server']).default('agent'),
+  LLM_BASE_URL: z.string().optional().default(''),
+  LLM_MODEL: z.string().optional().default(''),
+  LLM_API_KEY: z.string().optional().default(''),
+  // Embeddings: 'lexical' needs nothing; an OpenAI-compatible endpoint (LM Studio, Ollama, MLX…) or OpenAI is optional.
+  EMBEDDINGS_PROVIDER: z.enum(['auto', 'lexical', 'openai-compatible', 'openai']).default('auto'),
+  EMBEDDINGS_BASE_URL: z.string().optional().default(''),
+  EMBEDDINGS_MODEL: z.string().optional().default(''),
+  EMBEDDINGS_API_KEY: z.string().optional().default(''),
   LOOKACRAWLER_URL: z.string().optional().default(''),
   JINA_API_KEY: z.string().optional().default(''),
   FIRECRAWL_API_KEY: z.string().optional().default(''),

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { abStepDelta } from '../../src/core/analytics/service.js';
 import { classifyReply, classifyReplyHeuristic } from '../../src/core/analytics/replyClassifier.js';
-import { generateEmbeddingWithModel, HASH_EMBEDDING_MODEL } from '../../src/core/icp/embeddings.js';
+import { generateEmbeddingWithModel, generateLexicalEmbedding, LEXICAL_EMBEDDING_MODEL } from '../../src/core/icp/embeddings.js';
 import { config } from '../../src/config/env.js';
 
 describe('A/B conversion attribution', () => {
@@ -23,11 +23,20 @@ describe('A/B conversion attribution', () => {
 });
 
 describe('embedding model labelling', () => {
-  // Skipped when an OpenAI key is configured (it would call the real embeddings API).
-  it.skipIf(Boolean(config.OPENAI_API_KEY))('labels the non-semantic fallback so it is never compared for ICP fit', async () => {
+  // Skipped when an embeddings provider is configured (it would call it).
+  it.skipIf(Boolean(config.OPENAI_API_KEY || config.EMBEDDINGS_BASE_URL))('works with no API at all: local lexical embeddings', async () => {
     const { embedding, model } = await generateEmbeddingWithModel('B2B dental clinic in London');
-    expect(model).toBe(HASH_EMBEDDING_MODEL);
+    expect(model).toBe(LEXICAL_EMBEDDING_MODEL);
     expect(embedding).toHaveLength(1536);
+  });
+
+  it('lexical embeddings are meaningful: shared vocabulary means closer vectors', () => {
+    const cos = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i]!, 0);
+    const icp = generateLexicalEmbedding('Clínicas odontológicas em São Paulo com agendamento online e WhatsApp');
+    const dental = generateLexicalEmbedding('Clínica odontológica com agendamento pelo WhatsApp, implantes e ortodontia em São Paulo');
+    const saas = generateLexicalEmbedding('B2B SaaS platform for DevOps observability and Kubernetes monitoring');
+    expect(cos(icp, dental)).toBeGreaterThan(0.3);
+    expect(cos(icp, dental)).toBeGreaterThan(cos(icp, saas) + 0.2);
   });
 });
 
