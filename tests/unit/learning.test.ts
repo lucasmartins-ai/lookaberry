@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyChannelPriors, computeInsights, wilsonLowerBound, type LearningEvent } from '../../src/core/learning/service.js';
+import { applyChannelPriors, blockedWeekdays, computeInsights, wilsonLowerBound, wilsonUpperBound, type LearningEvent } from '../../src/core/learning/service.js';
 import { normalizeSegment } from '../../src/core/learning/segments.js';
 
 const day = (n: number, hour = 10) => new Date(Date.UTC(2026, 8, n, hour));
@@ -90,5 +90,43 @@ describe('applyChannelPriors', () => {
 
   it('leaves the order alone when nothing has been learned', () => {
     expect(applyChannelPriors(score, [], 'dental')).toBe(score);
+  });
+});
+
+
+describe('learned send days', () => {
+  const ALL_WEEK = [0, 1, 2, 3, 4, 5, 6];
+  // 2026-09-04 is a Friday, 2026-09-01 a Tuesday
+  function week(friSends: number, friPositives: number, tueSends: number, tuePositives: number): LearningEvent[] {
+    const out: LearningEvent[] = [];
+    const add = (dayOfMonth: number, n: number, positives: number, tag: string) => {
+      for (let i = 0; i < n; i++) {
+        const person = `${tag}${i}`;
+        out.push(ev({ eventType: 'SENT', occurredAt: day(dayOfMonth), personHash: person }));
+        if (i < positives) out.push(ev({ eventType: 'REPLIED', occurredAt: day(dayOfMonth, 15), personHash: person, intent: 'INTERESTED' }));
+      }
+    };
+    add(4, friSends, friPositives, 'f');
+    add(1, tueSends, tuePositives, 't');
+    return out;
+  }
+
+  it('blocks a weekday only with strong evidence it underperforms', () => {
+    // Fri 0/300 vs Tue 30/300 → channel 5%; Fri upper bound ~0.9% < 2.5%
+    expect(blockedWeekdays(week(300, 0, 300, 30), 'email', ALL_WEEK)).toEqual([5]);
+  });
+
+  it('does not block on thin data or when the channel has too few positives', () => {
+    expect(blockedWeekdays(week(60, 0, 300, 30), 'email', ALL_WEEK)).toEqual([]); // < 100 sends that day
+    expect(blockedWeekdays(week(300, 0, 300, 3), 'email', ALL_WEEK)).toEqual([]); // channel < 5 positives
+  });
+
+  it('never leaves fewer than 3 allowed days', () => {
+    expect(blockedWeekdays(week(300, 0, 300, 30), 'email', [2, 4, 5])).toEqual([]);
+  });
+
+  it('upper bound is optimistic', () => {
+    expect(wilsonUpperBound(0, 300)).toBeGreaterThan(0);
+    expect(wilsonUpperBound(0, 300)).toBeLessThan(0.02);
   });
 });

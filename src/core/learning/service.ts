@@ -85,8 +85,21 @@ function armKey(send: LearningEvent, by: Dimension): string {
   }
 }
 
-/** Pure: events in, insights out. */
-export function computeInsights(events: LearningEvent[], by: Dimension = 'segment', minSent = 30): Insights {
+/** Wilson score upper bound (z=1.645 → 90%). */
+export function wilsonUpperBound(successes: number, trials: number, z = 1.645): number {
+  if (trials === 0) return 1;
+  const p = successes / trials;
+  const denom = 1 + (z * z) / trials;
+  const centre = p + (z * z) / (2 * trials);
+  const margin = z * Math.sqrt((p * (1 - p)) / trials + (z * z) / (4 * trials * trials));
+  return Math.min(1, (centre + margin) / denom);
+}
+
+/**
+ * Pure: events in, insights out. `channel` limits which sends are aggregated; attribution
+ * still sees every send, so a WhatsApp follow-up keeps the credit over an earlier email.
+ */
+export function computeInsights(events: LearningEvent[], by: Dimension = 'segment', minSent = 30, channel?: string): Insights {
   const sorted = [...events].sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
   const sends = sorted.filter(e => e.eventType === 'SENT');
   const outcomes: Record<string, { replied: boolean; positive: boolean; negative: boolean; bounced: boolean; meeting: boolean }> = {};
@@ -131,6 +144,7 @@ export function computeInsights(events: LearningEvent[], by: Dimension = 'segmen
   const arms = new Map<string, ArmStats>();
   const totals = { sent: 0, replied: 0, positive: 0, negative: 0, bounced: 0, meetings: 0, positiveRate: 0, positiveRateLow: 0 };
   sends.forEach((s, i) => {
+    if (channel && s.channel !== channel) return;
     const key = armKey(s, by);
     const arm = arms.get(key) ?? { key, sent: 0, replied: 0, positive: 0, negative: 0, bounced: 0, meetings: 0, positiveRate: 0, positiveRateLow: 0, enoughData: false };
     const f = outcomes[i];
@@ -212,4 +226,39 @@ export function applyChannelPriors(score: OpportunityScore, priors: ArmStats[], 
   const best = priors[0]!;
   const line = `Learned: ${best.key.split('|')[1]} gets ${(best.positiveRate * 100).toFixed(1)}% positive replies in ${normalizeSegment(segment)} (n=${best.sent})`;
   return { ...score, recommendedActions, whyNow: [...score.whyNow, line] };
+}
+
+// ── Learned send days (conservative) ──
+
+export const BLOCK_MIN_SENT = 100;
+export const BLOCK_MIN_CHANNEL_POSITIVES = 5;
+const DAY_INDEX: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+/**
+ * Weekdays to stop sending on for a channel. A day is blocked only when the evidence is strong:
+ * at least BLOCK_MIN_SENT sends that day, the channel has BLOCK_MIN_CHANNEL_POSITIVES positives,
+ * and even the optimistic (90% upper) rate for that day is under half the channel's rate.
+ * At most 2 days, and never leaving fewer than 3 allowed days.
+ */
+export function blockedWeekdays(events: LearningEvent[], channel: string, allowedDays: number[]): number[] {
+  const insights = computeInsights(events, 'weekday', BLOCK_MIN_SENT, channel);
+  if (insights.totals.positive < BLOCK_MIN_CHANNEL_POSITIVES) return [];
+  const threshold = insights.totals.positiveRate * 0.5;
+  const blocked = insights.arms
+    .filter(a => a.sent >= BLOCK_MIN_SENT && wilsonUpperBound(a.positive, a.sent) < threshold)
+    .sort((a, b) => a.positiveRate - b.positiveRate)
+    .map(a => DAY_INDEX[a.key]!)
+    .filter(d => allowedDays.includes(d))
+    .slice(0, 2);
+  return allowedDays.length - blocked.length >= 3 ? blocked : [];
+}
+
+let scheduleCache: { at: number; events: LearningEvent[] } | null = null;
+
+/** blockedWeekdays over live events, cached 1h. */
+export async function getBlockedWeekdays(channel: string, allowedDays: number[]): Promise<number[]> {
+  if (!scheduleCache || Date.now() - scheduleCache.at > PRIORS_TTL_MS) {
+    scheduleCache = { at: Date.now(), events: await loadLearningEvents() };
+  }
+  return blockedWeekdays(scheduleCache.events, channel, allowedDays);
 }

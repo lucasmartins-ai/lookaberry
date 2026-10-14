@@ -34,6 +34,7 @@ import { getBackoffTracker, remainingWaitMs } from './backoff.js';
 import { deadLetterJob, type DLQStore } from './dlq.js';
 import { getMemoryLock } from './locking.js';
 import { shouldBlockLead } from '../security/suppression.js';
+import { getBlockedWeekdays } from '../learning/service.js';
 
 export interface DispatcherJobData {
   sequenceId: string;
@@ -371,8 +372,14 @@ async function processSequenceStep(
         continue;
       }
 
-      if (!shouldSendNow(schedulableLead, channelId, scheduleCfg)) {
-        const nextSlot = nextAvailableSlot(schedulableLead, channelId, scheduleCfg);
+      // Learned timing: drop weekdays that have clearly underperformed on this channel.
+      const blockedDays = await getBlockedWeekdays(channelId, scheduleCfg.daysOfWeek).catch(() => [] as number[]);
+      const channelSchedule = blockedDays.length
+        ? { ...scheduleCfg, daysOfWeek: scheduleCfg.daysOfWeek.filter(d => !blockedDays.includes(d)) }
+        : scheduleCfg;
+
+      if (!shouldSendNow(schedulableLead, channelId, channelSchedule)) {
+        const nextSlot = nextAvailableSlot(schedulableLead, channelId, channelSchedule);
         const msg = currentStep.messages.find((m: { leadId: string }) => m.leadId === lead.id);
         if (msg) {
           await scheduleWorker.enqueueScheduled(prisma, msg.id, nextSlot);
