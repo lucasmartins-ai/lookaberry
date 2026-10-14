@@ -135,6 +135,9 @@ model IcpProfile {
   valuePropositions Json                         @default("[]") @map("value_propositions")
   embedding         Unsupported("vector(1536)")?
   embeddingModel    String?                      @map("embedding_model") @db.VarChar(64)
+  positiveCentroid  Unsupported("vector(1536)")? @map("positive_centroid")
+  positiveCount     Int                          @default(0) @map("positive_count")
+  centroidUpdatedAt DateTime?                    @map("centroid_updated_at") @db.Timestamptz(6)
   createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime                     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

@@ -152,6 +152,7 @@ export class DecisionService {
   /**
    * Cosine similarity only when both vectors come from the same semantic model; otherwise fall back
    * to the explicit companies.icp_fit_score (0-100). Comparing hash or mixed-model vectors is noise.
+   * With a positive centroid (lookalike of converted companies), the closer of the two counts.
    */
   private async fetchIcpFit(companyId: string, icpId: string): Promise<number> {
     const rows = await prisma.$queryRaw<Array<{ icp_fit: number }>>(Prisma.sql`
@@ -160,7 +161,10 @@ export class DecisionService {
           WHEN c.embedding IS NOT NULL AND p.embedding IS NOT NULL
                AND c.embedding_model = p.embedding_model
                AND c.embedding_model <> ${HASH_EMBEDDING_MODEL}
-            THEN GREATEST(0, LEAST(100, (1 - (c.embedding <=> p.embedding)) * 100))
+            THEN GREATEST(0, LEAST(100, GREATEST(
+              (1 - (c.embedding <=> p.embedding)),
+              COALESCE(1 - (c.embedding <=> p.positive_centroid), 0)
+            ) * 100))
           ELSE COALESCE(c.icp_fit_score, 0)
         END)::numeric, 2)::float / 100.0 AS icp_fit
       FROM companies c

@@ -8,6 +8,7 @@ import { createInboxWorker } from './core/execution/inboxWorker.js';
 import { SequenceScheduler } from './core/execution/scheduler.js';
 import { RetentionScheduler } from './core/execution/retentionScheduler.js';
 import { autoPromoteAbWinners } from './core/execution/abPromotion.js';
+import { refreshPositiveCentroids } from './core/learning/lookalike.js';
 import { closeQueues } from './core/queues/queue.js';
 import { prisma } from './db/client.js';
 
@@ -56,6 +57,12 @@ async function bootstrap() {
     retentionScheduler.start();
     console.log('✅ Retention Scheduler active (1h interval)');
 
+    // 3b'. Lookalike ICP: refresh positive centroids hourly (cheap SQL)
+    const refreshCentroids = () =>
+      refreshPositiveCentroids().catch(err => console.warn('[Lookalike] refresh failed:', err instanceof Error ? err.message : String(err)));
+    refreshCentroids();
+    const centroidTimer = setInterval(refreshCentroids, 3_600_000);
+
     // 3c. A/B auto-promotion (opt-in, hourly)
     const abTimer = config.AB_TEST_AUTO_PROMOTE
       ? setInterval(() => {
@@ -90,6 +97,7 @@ async function bootstrap() {
         scheduler.stop();
         retentionScheduler.stop();
         if (abTimer) clearInterval(abTimer);
+        clearInterval(centroidTimer);
         await app.close();
         await icpWorker.close();
         await enrichmentWorker.close();

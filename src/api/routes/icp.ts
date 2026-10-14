@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { icpService } from '../../core/icp/service.js';
 import { AnalyzeIcpInputSchema } from '../../mcp/schemas/icp.js';
+import { findLookalikes } from '../../core/learning/lookalike.js';
 
 export async function icpRoutes(app: FastifyInstance) {
   app.post(
@@ -101,6 +102,28 @@ export async function icpRoutes(app: FastifyInstance) {
       }
 
       return reply.send(profile);
+    }
+  );
+
+  app.get(
+    '/api/v1/icp/:id/lookalikes',
+    {
+      schema: {
+        description: 'Companies most similar to the ones that converted for this ICP (or to the ICP itself while there are fewer than 3 positives). Skips companies already replied/unsubscribed/bounced.',
+        tags: ['ICP', 'Learning'],
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
+        querystring: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 } } },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { limit } = request.query as { limit?: number };
+      try {
+        return { icp_id: id, lookalikes: await findLookalikes(id, limit ?? 20) };
+      } catch (err) {
+        request.log.error(err);
+        return reply.status(500).send({ error: 'Failed to compute lookalikes' });
+      }
     }
   );
 }
