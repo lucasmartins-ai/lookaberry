@@ -63,7 +63,7 @@
 
 ---
 
-## 🛠️ Complete MCP Tool Catalog (9 Registered Tools)
+## 🛠️ Complete MCP Tool Catalog
 
 | MCP Tool | Description | Sprint |
 | :--- | :--- | :---: |
@@ -76,6 +76,7 @@
 | [`gtm_schedule_outreach_sequence`](#gtm_schedule_outreach_sequence) | Schedules multi-channel cadences with human delays and daily quota enforcement | Sprint 5 |
 | [`gtm_track_campaign_metrics`](#gtm_track_campaign_metrics) | Aggregates real-time conversion rates (open, click, reply, positive reply, bounce) | Sprint 6 |
 | [`gtm_record_lead_interaction_feedback`](#gtm_record_lead_interaction_feedback) | Logs events, classifies sentiment, pauses sequences, and reinforces intent weights | Sprint 6 |
+| `gtm_build_lead_delivery` | Final delivery: only leads whose contact has 2 independent confirmations (live re-check + site/company record/identity) and verifiable facts; each with business dossier, sourced facts and grounded approach suggestions. Rejects listed with reasons | Verification gate |
 
 ---
 

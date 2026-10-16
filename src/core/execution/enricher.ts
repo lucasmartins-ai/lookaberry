@@ -1,6 +1,7 @@
 import { promises as dns } from 'dns';
 import type { ChannelId } from '../channels/types.js';
 import { detectTimezone } from './smartScheduler.js';
+import { checkPhone } from '../verification/contactCheck.js';
 
 /**
  * S10: Lead Enrichment Engine
@@ -84,26 +85,10 @@ async function validateEmail(
 
 // ─── Phone validation ───
 
-/**
- * E.164 phone number validation.
- * Accepts: +[country][number] where number is 7-15 digits.
- * Also accepts Brazilian formats with optional 0 prefix.
- */
+/** Format + fake-number check (repeated/sequential digits, unknown DDD) shared with the lead gate. */
 function validatePhone(phone: string | null): 'VALID' | 'INVALID' | null {
   if (!phone) return null;
-
-  const cleaned = phone.replace(/[\s\-()]/g, '');
-
-  // E.164 format: + followed by country code and number
-  if (/^\+[1-9]\d{6,14}$/.test(cleaned)) return 'VALID';
-
-  // Brazilian format: 55 followed by DDD + 8-9 digits (without +)
-  if (/^55[1-9]{2}9?\d{8}$/.test(cleaned)) return 'VALID';
-
-  // Brazilian with leading 0: 0XX9XXXXXXXX
-  if (/^0[1-9]{2}9?\d{8}$/.test(cleaned)) return 'VALID';
-
-  return 'INVALID';
+  return checkPhone(phone).verdict === 'FAKE' ? 'INVALID' : 'VALID';
 }
 
 // ─── Duplicate detection ───
