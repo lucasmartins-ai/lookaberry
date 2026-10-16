@@ -82,9 +82,13 @@ export function checkName(name: string | null | undefined): ContactCheck {
 }
 
 /** Pulls emails, phones and WhatsApp links out of raw HTML/text (site cross-check). */
-export function extractContacts(html: string): { emails: string[]; phones: string[] } {
+const MAX_SCAN_CHARS = 500_000;
+
+export function extractContacts(input: string): { emails: string[]; phones: string[] } {
+  // Untrusted HTML: cap the scanned size and keep every quantifier bounded.
+  const html = input.slice(0, MAX_SCAN_CHARS);
   const emails = new Set<string>();
-  for (const m of html.matchAll(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi)) {
+  for (const m of html.matchAll(/[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}/gi)) {
     const e = m[0].toLowerCase();
     if (!/\.(png|jpe?g|gif|svg|webp|css|js)$/.test(e)) emails.add(e);
   }

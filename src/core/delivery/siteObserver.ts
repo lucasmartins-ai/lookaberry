@@ -28,7 +28,10 @@ const PLATFORMS: Array<[RegExp, string]> = [
   [/lojaintegrada/i, 'Loja Integrada'], [/tray\.com\.br|traycorp/i, 'Tray'], [/_next\/static/i, 'Next.js'],
 ];
 
-export function observeHtml(html: string, url: string): SiteObservation {
+const MAX_HTML_CHARS = 500_000;
+
+export function observeHtml(raw: string, url: string): SiteObservation {
+  const html = raw.slice(0, MAX_HTML_CHARS);
   const $ = cheerio.load(html);
   const links = $('a[href]').map((_, a) => $(a).attr('href') ?? '').get().join(' ');
   const all = `${html} ${links}`;
