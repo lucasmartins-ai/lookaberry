@@ -31,7 +31,7 @@ export const UNREACHABLE_PHRASES = [
 export const BOOKING_MARKERS = [
   'calendly.com', 'acuityscheduling', 'setmore', 'simplybook', 'booksy', 'fresha', 'treatwell', 'cliniko',
   'jane.app', 'dentally', 'vetstoria', 'petsapp', 'pabau', 'phorest', 'gettimely', 'squareup.com/appointments',
-  'zocdoc', 'doctolib', 'writeupp', 'that-time.co.uk', 'zenoti.com', 'facesconsent.com', 'vagaro', 'mindbodyonline', 'book online', 'online booking', 'book an appointment online', 'agendar online',
+  'zocdoc', 'doctolib', 'writeupp', 'that-time.co.uk', 'zenoti.com', 'facesconsent.com', 'vagaro', 'mindbodyonline', 'portal.dental', 'carestack', 'onlineappointment', 'book online', 'online booking', 'book an appointment online', 'agendar online',
   'agende online', 'agendamento online',
 ];
 
