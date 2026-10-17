@@ -32,6 +32,12 @@ export interface AnnouncementInput {
   metadata?: unknown;
 }
 
+export interface ReviewInput {
+  text: string;
+  rating?: number;
+  published_at?: Date | string;
+}
+
 export interface SignalCollectionInput {
   company_domain: string;
   company_name: string;
@@ -51,6 +57,10 @@ export interface SignalCollectionInput {
   announcements_url?: string;
   announcements_html?: string;
   announcement_items?: AnnouncementInput[];
+  reviews?: ReviewInput[];
+  reviews_url?: string;
+  /** Booking links already known for the business (e.g. Google Maps "Book" / order_online). */
+  booking_links?: string[];
   metadata?: unknown;
 }
 

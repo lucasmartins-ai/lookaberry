@@ -8,6 +8,7 @@ export const IntentSignalTypeSchema = z.enum([
   'CONTENT_ENGAGEMENT',
   'WEBSITE_CHANGE',
   'PUBLIC_ANNOUNCEMENT',
+  'CUSTOMER_LOSS',
 ]);
 
 export const EvidenceClassificationSchema = z.enum([
@@ -55,6 +56,13 @@ export const SignalCollectionInputSchema = z.object({
   announcements_url: z.string().url().optional(),
   announcements_html: z.string().optional(),
   announcement_items: z.array(AnnouncementInputSchema).optional(),
+  reviews: z.array(z.object({
+    text: z.string().max(5_000),
+    rating: z.number().min(0).max(5).optional(),
+    published_at: z.coerce.date().optional(),
+  })).max(500).optional(),
+  reviews_url: z.string().url().optional(),
+  booking_links: z.array(z.string().url()).max(20).optional(),
   metadata: z.unknown().optional(),
 });
 
