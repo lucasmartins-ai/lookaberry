@@ -39,10 +39,13 @@ describe('customer-loss provider', () => {
       { text: "Tried to call afterwards. They put the phone down on me and haven't heard back since.", rating: 1 },
       { text: 'It took nearly 9 days to get to talk to a vet.', rating: 1 },
       { text: 'The consultation fee alone is £66 before any meds.', rating: 2 },
+      { text: 'Sadly there was no response to treatment and we lost him.', rating: 2 },
       { text: 'Easy to get an appointment, either by booking online or via phone.', rating: 5 },
       { text: 'They told me they were too busy and they will call me back, but I never received anything.', rating: 1 },
+      { text: "Tried to call afterwards. They put the phone down on me and haven't heard back since. I am still waiting for an answer from anyone…", rating: 0 },
+      { text: "Tried to call afterwards. They put the phone down on me and haven't heard back since. I am still waiting for an answer from anyone at all.", rating: 0 },
     ]);
-    expect(hits).toHaveLength(3);
+    expect(hits).toHaveLength(4);
   });
 
   it('trusts a Google Maps booking link over a bare website', async () => {

@@ -20,7 +20,8 @@ export const UNREACHABLE_PHRASES = [
   'nobody answers', 'never answer', "didn't answer", 'did not answer', 'never called back', 'never call back',
   "didn't call back", 'no call back', 'no callback', 'voicemail', 'on hold for', 'phone just rang', 'rang and rang',
   'impossible to book', "couldn't book", 'could not book', 'hard to book', 'difficult to book', 'no reply',
-  'never replied', "didn't respond", 'did not respond', 'never responded', 'no response', 'ignored my',
+  'never replied', "didn't respond", 'did not respond', 'never responded', 'received no response', 'got no response', 'had no response', 'no response from',
+  'no response to my', 'still no response', 'ignored my', // bare 'no response' also hit "no response to treatment"
   'trying to get hold of', 'never heard back', "haven't heard", 'have not heard', 'never received a call',
   'never got a call', 'will call me back, but', 'call me back but', 'put the phone down', 'hung up on',
   'days to get to talk', 'days to get through',
@@ -46,8 +47,11 @@ export function findComplaints(reviews: ReviewInput[]): { quote: string; phrase:
   for (const review of reviews.slice(0, MAX_REVIEWS)) {
     const text = (review.text ?? '').slice(0, MAX_REVIEW_CHARS);
     const lower = text.toLowerCase();
-    if (seen.has(lower)) continue; // same review often arrives in both default and extended lists
-    seen.add(lower);
+    // Same review arrives in both default and extended lists, one cut with "…":
+    // compare a normalized prefix, not the full text (Leeds Emergency Vets, 17/10).
+    const key = lower.replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 100);
+    if (seen.has(key)) continue;
+    seen.add(key);
     const phrase = UNREACHABLE_PHRASES.find(p => lower.includes(p));
     if (phrase) hits.push({ quote: text.slice(0, 280), phrase, rating: review.rating });
   }
