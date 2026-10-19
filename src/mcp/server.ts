@@ -8,6 +8,7 @@ import { registerAnalyticsTools } from './tools/analytics.js';
 import { registerDecisionTool } from './tools/decision.js';
 import { registerWhatsAppTool } from './tools/whatsapp.js';
 import { registerInsightsTool } from './tools/insights.js';
+import { registerDeliveryTool } from './tools/delivery.js';
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -24,6 +25,7 @@ export function createMcpServer(): McpServer {
   registerDecisionTool(server);
   registerWhatsAppTool(server);
   registerInsightsTool(server);
+  registerDeliveryTool(server);
 
   return server;
 }

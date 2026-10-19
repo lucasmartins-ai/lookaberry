@@ -36,6 +36,7 @@ export const DEFAULT_SIGNAL_WEIGHTS: Record<string, number> = {
   CONTENT_ENGAGEMENT: 50,
   WEBSITE_CHANGE: 65,
   PUBLIC_ANNOUNCEMENT: 60,
+  CUSTOMER_LOSS: 80,
 };
 
 export const SIGNAL_TYPE_MULTIPLIERS: Record<string, number> = {
@@ -46,6 +47,7 @@ export const SIGNAL_TYPE_MULTIPLIERS: Record<string, number> = {
   CONTENT_ENGAGEMENT: 0.7,
   WEBSITE_CHANGE: 0.85,
   PUBLIC_ANNOUNCEMENT: 0.8,
+  CUSTOMER_LOSS: 1.2,
 };
 
 export interface NormalizedIntentSignal extends NormalizedSignal {

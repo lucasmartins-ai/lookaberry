@@ -2,12 +2,14 @@ import { hiringProvider } from './hiring.js';
 import { publicAnnouncementsProvider } from './publicAnnouncements.js';
 import { websiteChangesProvider } from './websiteChanges.js';
 import { credentialedFundingProvider } from './credentialedFunding.js';
+import { customerLossProvider } from './customerLoss.js';
 import type { SignalProvider } from './types.js';
 
 export { hiringProvider } from './hiring.js';
 export { publicAnnouncementsProvider } from './publicAnnouncements.js';
 export { websiteChangesProvider } from './websiteChanges.js';
 export { credentialedFundingProvider } from './credentialedFunding.js';
+export { customerLossProvider } from './customerLoss.js';
 export { collectAndNormalizeProvider, collectAndNormalizeProviders } from './runner.js';
 export * from './types.js';
 
@@ -15,6 +17,7 @@ export const initialSignalProviders: SignalProvider[] = [
   websiteChangesProvider,
   hiringProvider,
   publicAnnouncementsProvider,
+  customerLossProvider,
 ];
 
 export const registeredSignalProviders: SignalProvider[] = [

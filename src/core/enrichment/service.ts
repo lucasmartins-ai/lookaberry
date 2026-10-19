@@ -2,6 +2,7 @@ import { resolveMx } from 'node:dns/promises';
 import axios from 'axios';
 import { prisma } from '../../db/client.js';
 import { config } from '../../config/env.js';
+import { checkEmail, checkPhone } from '../verification/contactCheck.js';
 import type { WaterfallEnrichLeadInput, WaterfallEnrichLeadOutput } from '../../mcp/schemas/enrichment.js';
 
 export type EmailStatus = 'VERIFIED' | 'RISKY' | 'INVALID' | 'NOT_FOUND';
@@ -87,7 +88,7 @@ const dropcontactProvider: EnrichmentProvider = {
 
 const unavailableProvider = (name: string): EnrichmentProvider => ({ name, credits: 0, async enrich() { return null; } });
 
-const defaultVerifier: EmailVerifier = config.ZEROBOUNCE_API_KEY ? {
+export const defaultVerifier: EmailVerifier = config.ZEROBOUNCE_API_KEY ? {
   async verify(email) {
     const response = await axios.get('https://api.zerobounce.net/v2/validate', { params: { api_key: config.ZEROBOUNCE_API_KEY, email } });
     const status = String(response.data?.status ?? '').toLowerCase();
@@ -159,7 +160,18 @@ export class WaterfallEnrichmentService {
         await this.repository.saveResult({ leadId: lead.id, provider: provider.name, costCredits: provider.credits, status: result?.email ? 'FOUND' : 'NOT_FOUND', responsePayload: result });
         if (!result?.email) continue;
 
-        const emailStatus = await this.verifier.verify(result.email);
+        // Fake/placeholder data from a provider never reaches the lead: try the next provider.
+        const emailCheck = checkEmail(result.email, lead.companyDomain);
+        if (emailCheck.verdict === 'FAKE') {
+          await this.repository.saveResult({ leadId: lead.id, provider: 'FAKE_CONTACT_FILTER', costCredits: 0, status: 'REJECTED', responsePayload: { email: result.email, reason: emailCheck.reason } });
+          continue;
+        }
+        const phoneCheck = result.phone ? checkPhone(result.phone) : null;
+        if (phoneCheck?.verdict === 'FAKE') result.phone = undefined;
+
+        // A domain that doesn't match the company caps the status at RISKY: it needs corroboration before delivery.
+        const verified = await this.verifier.verify(result.email);
+        const emailStatus: EmailStatus = emailCheck.verdict === 'DOUBTFUL' && verified === 'VERIFIED' ? 'RISKY' : verified;
         await this.repository.saveResult({ leadId: lead.id, provider: 'SMTP_VALIDATOR', costCredits: 0, status: emailStatus, responsePayload: { email: result.email } });
         if (emailStatus === 'INVALID') continue;
 
