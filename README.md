@@ -1,6 +1,6 @@
 # 🍓 LookaBerry — AI GTM Outbound Engine (API + MCP Server)
 
-> **Autonomous, headless Go-to-Market (GTM) and B2B Outbound infrastructure designed for AI agents. Powered by PostgreSQL 16 + pgvector (HNSW), aggressive token-pruning crawler integration, and a production-grade Model Context Protocol (MCP) server.**
+> **Open-source (MIT) B2B prospecting API and MCP server for AI agents: ICP analysis, lead scoring in PostgreSQL + pgvector, waterfall enrichment, message drafting and rate-limited outreach. Early stage: no production customers are documented yet.**
 
 [![Node.js](https://img.shields.io/badge/Node.js-v22%20LTS-green.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org)
@@ -8,58 +8,51 @@
 [![MCP](https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2.svg)](https://modelcontextprotocol.io)
 [![Fastify](https://img.shields.io/badge/Fastify-5.2-black.svg)](https://fastify.dev)
 [![BullMQ](https://img.shields.io/badge/BullMQ-Redis%20Queues-red.svg)](https://bullmq.io)
-[![Tests](https://img.shields.io/badge/tests-560%20passing-brightgreen.svg)]()
+[![CI](https://github.com/lucasmartins-ai/lookaberry/actions/workflows/ci.yml/badge.svg)](https://github.com/lucasmartins-ai/lookaberry/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## 🏷️ Tags & Keywords
 
-`ai-agent` • `model-context-protocol` • `mcp-server` • `gtm-outbound` • `b2b-sales-intelligence` • `pgvector` • `hnsw-indexing` • `zero-token-waste` • `lead-scoring` • `intent-signals` • `waterfall-enrichment` • `cold-email-automation` • `linkedin-outreach` • `sales-enablement` • `prompt-caching` • `anti-ban` • `typescript` • `fastify` • `bullmq` • `redis` • `autonomous-outreach` • `rbac` • `audit-log` • `lgpd` • `gdpr` • `data-privacy` • `anonymization` • `suppression-list`
+`ai-agent` • `model-context-protocol` • `mcp-server` • `gtm-outbound` • `b2b-sales-intelligence` • `pgvector` • `lead-scoring` • `intent-signals` • `waterfall-enrichment`
 
 ---
 
 ## 📌 Overview
 
-**LookaBerry** is a next-generation B2B prospecting and revenue engine designed to be operated autonomously by **AI Agents** (Cursor, Claude Code, Antigravity, OpenCode, Codex, Windsurf) through the **Model Context Protocol (MCP)** and **OpenAPI 3.1 REST API**.
+**LookaBerry** is a B2B prospecting engine that AI agents (Claude Code, Cursor, Codex and others) operate through the **Model Context Protocol (MCP)** or a REST API.
 
-### Why LookaBerry?
+### What it does
 
-- ⚡ **Zero Token Waste Lead Ranking**: Semantic search, ICP fit calculation, and intent weighting run in-database via PostgreSQL 16 `pgvector` with HNSW cosine distance indexes — consuming **0 LLM tokens** to rank thousands of leads.
-- 🧹 **LookaCrawler Token Pruning**: Aggressively strips HTML noise (>73% size reduction) to feed clean, distilled semantic Markdown to AI models.
-- 🔄 **Autonomous Waterfall Enrichment**: Multi-provider cascading (Cache ➔ Apollo ➔ Dropcontact ➔ SMTP/DNS MX) with verified deliverability.
-- ✍️ **Contextual Hyper-Personalization**: Connects real-time intent signals directly to prospect buyer personas with Anthropic prompt caching and strict anti-spam guardrails.
-- 🛡️ **Anti-Ban Multi-Channel Dispatcher**: Enforces daily account quotas, Gaussian human-like delays (45s–210s), and automatic 48-hour safety cool-downs.
-- 🔁 **Closed-Loop RL Feedback**: Captures email/LinkedIn interactions (Sent, Opened, Clicked, Replied, Bounced), classifies sentiment with Haiku, pauses sequences upon response, and automatically boosts predictive intent weights (+5 on positive reply).
-- 🤖 **Autonomous Outreach Loop (S6)**: SequenceScheduler polls for due sequences, dispatcher processes one step at a time with configurable delays, inbox worker reads LinkedIn replies, feedback loop adjusts intent weights — the system walks alone.
-- 🔐 **Security & Governance (S15)**: API key lifecycle (create/rotate/revoke), RBAC (Admin/Operator/Campaign Manager/Viewer), campaign isolation, admin audit trail, global suppression list with multi-channel opt-out cascade, data retention & anonymization (LGPD/GDPR), secrets masking in logs and webhook payloads, full threat model.
-- 📊 **Reliability (S14)**: Event idempotency (DB UNIQUE + negative cache), exponential backoff with full jitter, Dead-Letter Queue for failed jobs, distributed locking, graceful recovery on restart.
+- **Lead ranking without LLM calls**: ICP fit and intent weighting run in PostgreSQL 16 with `pgvector` (HNSW). Ranking quality depends on the embedding provider; the built-in fallback uses local lexical embeddings, which are weak semantically.
+- **LookaCrawler integration**: page content is reduced to Markdown before it reaches a model.
+- **Waterfall enrichment**: Cache → Apollo → Dropcontact → SMTP/DNS MX checks. Apollo and Dropcontact need your own credentials.
+- **Message drafting**: drafts from the lead's signals and persona. Runs without an LLM API by default (agent mode); Anthropic is optional.
+- **Rate-limited dispatcher**: per-account daily quotas, randomised delays (45–210 s) and 48-hour cool-downs. LinkedIn automation runs through a browser extension bridge and may breach LinkedIn's terms; use it at your own risk.
+- **Feedback-driven scoring**: interactions (sent, opened, replied, bounced) pause sequences on reply and adjust intent weights with a simple heuristic.
+- **Governance tools**: API key lifecycle, RBAC, audit trail, and a suppression list with multi-channel opt-out cascade. These support GDPR/LGPD work; they do not make a deployment compliant on their own. See [SECURITY.md](SECURITY.md).
+- **Reliability**: idempotent events, backoff with jitter, dead-letter queue, distributed locks, recovery on restart.
 
 ---
 
-## 🗺️ Sprint Execution Roadmap & Operational Status
+## 🗺️ Module status
 
-| Sprint | Focus & Milestone | Active MCP Tools | Status |
-| :--- | :--- | :--- | :---: |
-| **Sprint 1** | **Core Foundation, pgvector Database & MCP Server Base** | `gtm_analyze_icp` | 🟢 **Operational** |
-| **Sprint 2** | **Intent Signal Ingestion & Zero-Token Hybrid Scoring** | `gtm_detect_intent_signals`, `gtm_score_and_rank_leads` | 🟢 **Operational** |
-| **Sprint 3** | **Waterfall Enrichment & Deliverability Validation** | `gtm_waterfall_enrich_lead` | 🟢 **Operational** |
-| **Sprint 4** | **Hyper-Personalization Engine & Anti-Spam Guardrails** | `gtm_generate_hyper_personalized_message` | 🟢 **Operational** |
-| **Sprint 5** | **Multi-Channel Dispatcher & Anti-Ban State Machine** | `gtm_schedule_outreach_sequence` | 🟢 **Operational** |
-| **Sprint 6** | **Closed-Loop Analytics, Feedback & Autonomous Loop** | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | 🟢 **Operational** |
-| **GTM Brain 2.0** | **Entity Graph, Intent Providers, Decision Engine, Channel Abstraction, Execution Protocol** | `gtm_evaluate_opportunity` | 🟢 **Operational** |
-| **Sprint 7** | **Auth, Rate Limiting & Webhook Signatures** | — (hardening) | 🟢 **Operational** |
-| **Sprint 8** | **Email Execution (Resend/SMTP)** | — (email adapter) | 🟢 **Operational** |
-| **Sprint 12** | **Production Hardening & Observability** | — (health checks, DLQ endpoints) | 🟢 **Operational** |
-| **Sprint 14** | **Reliability — Idempotency, Backoff, DLQ, Locking, Recovery** | — (infrastructure) | 🟢 **Operational** |
-| **Sprint 15** | **Security & Governance — API Key Lifecycle, RBAC, Audit, Suppression, Anonymization** | — (admin API) | 🟢 **Operational** |
-
-### Upcoming Sprints
-
-| Sprint | Focus | MCP Tools |
+| Module | MCP tools | Status |
 | :--- | :--- | :--- |
-| **Sprint 9** | **WhatsApp Execution & Multi-Account LinkedIn** | `gtm_send_whatsapp`, account rotation, session management |
-| **Sprint 10** | **Ops Dashboard, Real-Time Monitoring, Campaign Engine** | Dashboard UI, queue monitoring, alert webhooks |
+| ICP analysis | `gtm_analyze_icp` | Implemented, unit-tested |
+| Intent signals and scoring | `gtm_detect_intent_signals`, `gtm_score_and_rank_leads` | Implemented, unit-tested |
+| Waterfall enrichment | `gtm_waterfall_enrich_lead` | Implemented; providers need credentials |
+| Message drafting | `gtm_generate_hyper_personalized_message` | Implemented, unit-tested |
+| Sequences and dispatcher | `gtm_schedule_outreach_sequence` | Implemented, unit-tested |
+| Analytics and feedback | `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback` | Implemented, unit-tested |
+| Opportunity evaluation | `gtm_evaluate_opportunity` | Implemented, unit-tested |
+| Email (Resend/SMTP) | — | Implemented; no unsubscribe header or footer yet |
+| WhatsApp | — | Beta |
+| Ops dashboard | — | Beta |
+| Auth, rate limits, webhook signatures, reliability, governance | — | Implemented, unit-tested |
+
+Known gaps: the signal ingestion queue has no worker yet, and outbound email does not add a `List-Unsubscribe` header or sender footer (opt-out is handled from replies). See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ---
 
@@ -192,15 +185,9 @@ flowchart TB
 
 ---
 
-## 🧪 Real Beta Test Execution & Output Walkthrough
+## 🧪 Beta walkthrough script
 
-LookaBerry includes an end-to-end beta test suite simulating a real customer account across all 6 sprints of the engine:
-
-```bash
-npm run test:beta
-```
-
-*(Full output available in the source — tests account provisioning, ICP creation, signal ingestion, lead scoring, waterfall enrichment, personalization with guardrails, campaign scheduling with anti-ban rules, and closed-loop feedback with sentiment classification.)*
+`npm run test:beta` runs a scripted walkthrough of one simulated account (ICP, signals, scoring, enrichment, drafting). It uses mocks, so it shows the flow, not real-world results.
 
 ---
 
@@ -272,7 +259,7 @@ LookaBerry is built **AI-Native** and connects seamlessly to any coding agent:
       "command": "npx",
       "args": ["-y", "tsx", "src/mcp/transports/stdio.ts"],
       "env": {
-        "DATABASE_URL": "postgresql://postgres:postgrespassword@127.0.0.1:5433/lookaberry?schema=public"
+        "DATABASE_URL": "postgresql://postgres:<password>@127.0.0.1:5433/lookaberry?schema=public"
       }
     }
   }
@@ -295,10 +282,10 @@ claude mcp add lookaberry npx -y tsx src/mcp/transports/stdio.ts
 LookaBerry includes a complete multi-tier testing suite:
 
 ```bash
-# 1. Run all unit tests (560 passing)
+# 1. Run the unit tests (no database needed)
 npm test
 
-# 2. Run official MCP client smoke test (validating all 9 tools)
+# 2. Run official MCP client smoke test (validating the registered tools)
 npm run test:smoke
 
 # 3. Run full end-to-end beta test with test account simulation
@@ -311,7 +298,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-> **Note**: 4 integration tests require PostgreSQL (127.0.0.1:5433) and Redis (localhost:6379). Unit tests (560) pass without infrastructure.
+> **Note**: 4 integration tests require PostgreSQL (127.0.0.1:5433) and Redis (localhost:6379). Unit tests pass without infrastructure; CI runs them on every push.
 
 ---
 
@@ -354,11 +341,11 @@ LookaBerry/
 │   │   │   ├── locking.ts       # S14: Distributed locking via pg_advisory_lock
 │   │   │   ├── recovery.ts      # S14: Graceful restart & reconnection recovery
 │   │   │   └── webhookIdempotency.ts # S14: Idempotent webhook event processing
-│   │   ├── analytics/       # Feedback classification & closed-loop RL metrics
+│   │   ├── analytics/       # Feedback classification & scoring adjustment
 │   │   └── queues/          # BullMQ queue definitions and workers
 │   ├── mcp/
 │   │   ├── server.ts        # McpServer instance & tool catalog
-│   │   ├── tools/           # 9 registered MCP tools across all sprints
+│   │   ├── tools/           # registered MCP tools
 │   │   ├── schemas/         # Zod schemas with strict validation
 │   │   └── transports/      # stdio and SSE transport entrypoints
 │   ├── api/
@@ -367,7 +354,7 @@ LookaBerry/
 │   │   └── plugins/         # OpenAPI 3.1 schema documentation
 │   └── index.ts             # Server entrypoint with all workers & scheduler
 └── tests/
-    ├── unit/                # 34 unit test files — 560 tests across all modules
+    ├── unit/                # unit tests (run in CI)
     ├── integration/         # Database, Fastify REST API, MCP, evidence, and S14 reliability integration tests
     ├── mcp-client-smoke.ts  # End-to-end MCP client smoke test
     └── beta-test-account.ts # Full beta test suite with test account simulation
