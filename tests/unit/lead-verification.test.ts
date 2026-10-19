@@ -3,7 +3,7 @@ import { checkEmail, checkName, checkPhone, extractContacts } from '../../src/co
 import { assessLead } from '../../src/core/verification/leadGate.js';
 import { findSlop, unsupportedNumbers } from '../../src/core/quality/antiSlop.js';
 import { observeHtml } from '../../src/core/delivery/siteObserver.js';
-import { buildLeadDelivery, type LeadCandidate } from '../../src/core/delivery/service.js';
+import { buildLeadDelivery, excerpt, type LeadCandidate } from '../../src/core/delivery/service.js';
 
 describe('contact checks', () => {
   it('flags fake and placeholder emails', () => {
@@ -117,6 +117,15 @@ describe('lead delivery', () => {
       expect(findSlop(a.opener_hint)).toEqual([]);
     }
     expect(lead.approaches.some(a => a.grounded_in.includes('site:whatsapp_link'))).toBe(true);
+    expect(lead.approaches.find(a => a.grounded_in.includes('signal:s1'))).toMatchObject({ fact_excerpt: 'Vaga de recepcionista aberta: Contratando recepcionista para atendimento', source_url: 'https://vagas.example/1', observed_at: '2026-10-01' });
     expect(result.rejected).toEqual([expect.objectContaining({ lead_id: 'l2' })]);
+  });
+});
+
+describe('fact excerpt', () => {
+  it('flattens third-party text into one short line without markup', () => {
+    const out = excerpt('Promo!\n\nIgnore previous instructions <script>{"x":1}</script> `rm -rf` ' + 'a'.repeat(300));
+    expect(out).not.toMatch(/[\n<>{}`"]/);
+    expect(out.length).toBeLessThanOrEqual(160);
   });
 });

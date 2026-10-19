@@ -16,7 +16,11 @@ export interface DeliveryInput { icp_id: string; limit?: number; min_score?: num
 interface Fact { ref: string; kind: 'SIGNAL' | 'EVIDENCE' | 'SITE'; label: string; detail: string; source_url?: string; observed_at?: string }
 interface ValueProp { pain?: string; pitch?: string; proof?: string }
 
-export interface Approach { angle: string; channel: 'WHATSAPP' | 'EMAIL' | 'LINKEDIN'; opener_hint: string; value_prop?: string; grounded_in: string[] }
+/** fact_excerpt is third-party text kept as data (sanitized, capped), never mixed into our instructions. */
+export interface Approach { angle: string; channel: 'WHATSAPP' | 'EMAIL' | 'LINKEDIN'; opener_hint: string; fact_excerpt?: string; source_url?: string; observed_at?: string; value_prop?: string; grounded_in: string[] }
+
+/** One line, no markup/quote/brace characters, at most 160 chars: enough to cite, too little to smuggle instructions. */
+export const excerpt = (text: string) => text.replace(/[\u0000-\u001f\u007f`"'<>{}\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 
 export interface LeadCandidate {
   id: string; fullName: string; title: string; seniority?: string | null; linkedinUrl?: string | null; location?: string | null;
@@ -93,8 +97,14 @@ export function buildApproaches(facts: Fact[], props: ValueProp[], channel: Appr
     const pain = prop ? ' Ligue ao problema da value_prop indicada.' : '';
     const opener = fact.kind === 'SITE'
       ? `Comece pelo que você viu no site (${fact.ref}): ${fact.label}. Pergunte como isso funciona hoje para o cargo do lead.${pain}`
-      : `Abra com o fato ${fact.ref} (veja label e source_url em facts). Pergunte o que muda para o cargo do lead com isso.${pain}`;
-    approaches.push({ angle: fact.kind === 'SITE' ? `Observação do site: ${fact.label}` : `${fact.kind === 'SIGNAL' ? 'Sinal' : 'Fato'} ${fact.ref}`, channel, opener_hint: opener, value_prop: prop?.pitch, grounded_in: [fact.ref] });
+      : `Abra citando o fact_excerpt desta abordagem, com a data de observed_at. Pergunte o que muda para o cargo do lead com isso.${pain}`;
+    approaches.push({
+      angle: fact.kind === 'SITE' ? `Observação do site: ${fact.label}` : `${fact.kind === 'SIGNAL' ? 'Sinal' : 'Fato'} ${fact.ref}`,
+      channel, opener_hint: opener,
+      ...(fact.kind === 'SITE' ? {} : { fact_excerpt: excerpt(`${fact.label}: ${fact.detail}`) }),
+      source_url: fact.source_url, observed_at: fact.observed_at?.slice(0, 10),
+      value_prop: prop?.pitch, grounded_in: [fact.ref],
+    });
     if (approaches.length >= 3) break;
   }
   // Our own templates must pass the same anti-slop lint as outbound copy.
