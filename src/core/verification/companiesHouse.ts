@@ -29,24 +29,27 @@ const CH = 'https://find-and-update.company-information.service.gov.uk';
 const CORPORATE_TYPE = /\blimited liability partnership\b|\blimited company\b|\blimited by guarantee\b|\bltd by guar/i;
 
 const UK_COUNTRY = /^(uk|u\.k\.|gb|gbr|united kingdom|great britain|england|scotland|wales|northern ireland)$/i;
-const UK_LOCATION = /\b(united kingdom|england|scotland|wales|northern ireland)\b|\bUK\b/i;
+// ponytail: hand list of the larger UK towns; a lead with only a smaller town and no other UK hint still slips. Add towns as leads show up.
+const UK_LOCATION = new RegExp('\\b(united kingdom|great britain|england|scotland|wales|northern ireland|london|manchester|birmingham|bristol|leeds|liverpool|sheffield|newcastle|nottingham|leicester|coventry|bradford|cardiff|swansea|newport|edinburgh|glasgow|aberdeen|dundee|belfast|southampton|portsmouth|plymouth|exeter|bath|brighton|reading|oxford|cambridge|norwich|york|hull|derby|stoke|wolverhampton|milton keynes|luton|swindon|gloucester|cheltenham|bournemouth|preston|sunderland|middlesbrough)\\b|\\bUK\\b', 'i');
 
-/** True when any field points at the UK. Fail closed: one UK hint is enough to require the check. */
-export function isUkLead(lead: { location?: string | null; phone?: string | null; company: { country?: string | null; domain?: string | null; whatsappPhone?: string | null } }): boolean {
+/** True when any field points at the UK (country, town or postcode in the location, .uk domain, +44 phone, UK postcode on the site).
+ * Fail closed: one UK hint is enough to require the check. */
+export function isUkLead(lead: { location?: string | null; phone?: string | null; company: { country?: string | null; domain?: string | null; whatsappPhone?: string | null } }, sitePostcodes: string[] = []): boolean {
   if (UK_COUNTRY.test((lead.company.country ?? '').trim())) return true;
-  if (UK_LOCATION.test(lead.location ?? '')) return true;
+  if (UK_LOCATION.test(lead.location ?? '') || postcodeDistrictsIn((lead.location ?? '').toUpperCase()).length || sitePostcodes.length) return true;
   const host = (lead.company.domain ?? '').toLowerCase().replace(/^https?:\/\//, '').split(/[/:?#]/)[0];
   if (host.endsWith('.uk')) return true;
   return [lead.phone, lead.company.whatsappPhone].some(p => Boolean(p) && Boolean(checkPhone(p).normalized?.startsWith('+44')));
 }
 
 // "Company No. 1234567", "Registered in England and Wales No: 08123456", "Company registration number SC123456".
-const NUMBER_NEAR_KEYWORD = /\b(?:company|registered|registration|reg)\b[^0-9<>]{0,40}?\b((?:SC|NI|OC|SO|NC|R0)\d{6}|\d{7,8})\b/gi;
+const NUMBER_NEAR_KEYWORD = /\b(?:company|registered|registration|reg)\b([^0-9<>]{0,40}?)\b((?:SC|NI|OC|SO|NC|R0)\d{6}|\d{7,8})\b/gi;
 const POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?) ?\d[A-Z]{2}\b/g;
 
 /** Company numbers printed near a registration keyword, zero-padded to the 8 characters Companies House uses. */
 export function companyNumbersIn(text: string): string[] {
-  return [...new Set([...text.matchAll(NUMBER_NEAR_KEYWORD)].map(m => m[1].toUpperCase().padStart(8, '0')))].slice(0, 3);
+  // "Registered charity number 1234567" is the Charity Commission register, not Companies House.
+  return [...new Set([...text.matchAll(NUMBER_NEAR_KEYWORD)].filter(m => !/charit/i.test(m[0])).map(m => m[2].toUpperCase().padStart(8, '0')))].slice(0, 3);
 }
 
 /** UK postcode districts ("BS8") in the text; upper case only, so ordinary words do not match. */
@@ -59,11 +62,12 @@ const nkey = (name: string) => name.toLowerCase().replace(/&/g, ' and ').replace
   .replace(/[^a-z0-9]+/g, ' ').trim().replace(/^the /, '').replace(/ co$/, ' company');
 /** The full name and the part before " - ", " | " or "(" ("Maid in Bristol Ltd - Office Cleaning"). */
 const nameKeys = (name: string) => new Set([nkey(name), nkey(name.split(/\s+[-|–]\s+|\s*\(/)[0])].filter(Boolean));
-/** A distinctive word in common: a number printed on a directory page belongs to the directory, not to the business. */
+/** Every distinctive word of the shorter name appears in the other ("Smith Dental" / "SMITH DENTAL CARE LTD"), so a number
+ * printed for a directory or a web agency ("Smith Web Design Ltd") never confirms the business. */
 function sameName(a: string, b: string): boolean {
   const words = (s: string) => new Set(nkey(s).split(' ').filter(w => w.length > 2 && !GENERIC.has(w)).map(w => w.slice(0, 6)));
-  const wb = words(b);
-  return [...words(a)].some(w => wb.has(w));
+  const [small, big] = [words(a), words(b)].sort((x, y) => x.size - y.size);
+  return small.size > 0 && [...small].every(w => big.has(w));
 }
 
 export interface SearchHit { number: string; name: string; address: string }
@@ -86,11 +90,15 @@ export function parseProfile(html: string, number: string): CompaniesHouseProfil
 }
 
 let lastCall = Promise.resolve();
+let waiting = 0;
+const MAX_WAITING = 20; // ~12 s of queue: past that, concurrent deliveries get UNAVAILABLE (excluded) instead of an unbounded wait
 // ponytail: one global 0.6 s gap (~1.6 req/s, under Companies House's 2 req/s); per-host token bucket if throughput matters.
 async function chGet(path: string): Promise<string> {
+  if (waiting >= MAX_WAITING) throw new Error('fila de consultas cheia');
+  waiting++;
   const turn = lastCall.then(() => new Promise<void>(r => setTimeout(r, 600)));
   lastCall = turn;
-  await turn;
+  try { await turn; } finally { waiting--; }
   const res = await axios.get(CH + path, { timeout: 15_000, responseType: 'text', headers: { 'User-Agent': 'LookaBerry-Verifier/1.0', Accept: 'text/html' } /* the default Accept gets an undocumented JSON body */, maxRedirects: 3,
     validateStatus: s => s < 400 || s === 404 }); // 404 = no such company number: parsed as "no profile", not as "down"
   return res.status === 200 && typeof res.data === 'string' ? res.data : '';
@@ -107,7 +115,7 @@ function judge(p: CompaniesHouseProfile, via: 'site_number' | 'name_postcode'): 
 
 export async function checkUkCompany(input: PecrInput, get: (path: string) => Promise<string> = chGet): Promise<PecrCheck> {
   try {
-    for (const n of input.companyNumbers.slice(0, 2)) {
+    for (const n of input.companyNumbers.slice(0, 3)) {
       const p = parseProfile(await get(`/company/${n}`), n);
       if (p && sameName(input.name, p.name)) return judge(p, 'site_number');
     }

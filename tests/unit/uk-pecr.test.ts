@@ -26,6 +26,9 @@ describe('UK detection', () => {
     expect(isUkLead(lead({ phone: '+44 7700 900123' }))).toBe(true);
     expect(isUkLead(lead({ whatsappPhone: '+447700900123' }))).toBe(true);
     expect(isUkLead(lead({ location: 'Bristol, England' }))).toBe(true);
+    expect(isUkLead(lead({ location: 'London, Greater London', domain: 'smithdental.com' }))).toBe(true);
+    expect(isUkLead(lead({ location: 'Clifton BS8 1AA' }))).toBe(true);
+    expect(isUkLead(lead({ domain: 'smithdental.com' }), ['BS8'])).toBe(true);
   });
 
   it('leaves Brazilian leads alone, including DDD 44 numbers without a country code', () => {
@@ -39,6 +42,7 @@ describe('site extraction', () => {
     expect(companyNumbersIn('Smith Dental Ltd. Registered in England and Wales No. 8123456. VAT 123456789')).toEqual(['08123456']);
     expect(companyNumbersIn('Company registration number: SC123456')).toEqual(['SC123456']);
     expect(companyNumbersIn('Call 0117 496 0123 to book')).toEqual([]);
+    expect(companyNumbersIn('Registered charity number 1234567. Company No. 08123456')).toEqual(['08123456']);
     expect(postcodeDistrictsIn('12 Park St, Bristol BS1 5HX and Clifton BS8 1AA')).toEqual(['BS1', 'BS8']);
   });
 
@@ -72,8 +76,8 @@ describe('checkUkCompany', () => {
   });
 
   it('ignores a site number that belongs to another name (a directory) and falls back to the name search', async () => {
-    const get = ch({ '/company/01234567': profile('YELL LIMITED'), [q('smith dental')]: search([]) });
-    expect((await checkUkCompany({ name: 'Smith Dental', companyNumbers: ['01234567'], postcodeDistricts: [] }, get)).status).toBe('NOT_FOUND');
+    const get = ch({ '/company/01234567': profile('YELL LIMITED'), '/company/07654321': profile('SMITH WEB DESIGN LIMITED'), [q('smith dental')]: search([]) });
+    expect((await checkUkCompany({ name: 'Smith Dental', companyNumbers: ['01234567', '07654321'], postcodeDistricts: [] }, get)).status).toBe('NOT_FOUND');
   });
 
   it('CORPORATE via exact name + same postcode district', async () => {
@@ -154,6 +158,7 @@ describe('lead delivery applies UK PECR', () => {
   it('never calls Companies House for a non-UK lead', async () => {
     const br = ukLead({ email: 'ana@clinica.com.br', company: { id: 'c1', name: 'Clínica Sorriso', domain: 'clinica.com.br', country: 'Brazil' } });
     const { deps, result } = run([br], { status: 'NOT_FOUND', reason: 'x' });
+    deps.observeSite.mockResolvedValue(observeHtml('<html><body>Clínica Sorriso, Rua Augusta 100, São Paulo SP, 01305-000. CNPJ 12.345.678/0001-90</body></html>', 'https://clinica.com.br'));
     expect((await result).delivered).toHaveLength(1);
     expect(deps.checkUkCompany).not.toHaveBeenCalled();
   });

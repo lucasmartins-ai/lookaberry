@@ -201,7 +201,7 @@ export async function buildLeadDelivery(input: DeliveryInput, deps: DeliveryDepe
 
     // UK PECR: cold messages only to a live Ltd/LLP confirmed on Companies House; checked before any other paid check.
     let pecr: PecrCheck | undefined;
-    if (isUkLead(lead)) {
+    if (isUkLead(lead, site?.postcode_districts)) {
       if (!pecrByCompany.has(lead.company.id)) pecrByCompany.set(lead.company.id, d.checkUkCompany({
         name: lead.company.name,
         companyNumbers: site?.company_numbers ?? [],
