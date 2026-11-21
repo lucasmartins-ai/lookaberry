@@ -52,7 +52,7 @@
 | Ops dashboard | — | Beta |
 | Auth, rate limits, webhook signatures, reliability, governance | — | Implemented, unit-tested |
 
-Known gaps: the signal ingestion queue has no worker yet, and outbound email does not add a `List-Unsubscribe` header or sender footer (opt-out is handled from replies). See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+Known gaps: three queues have a worker but nothing enqueues to them (ICP, enrichment, inbox), and outbound email does not add a `List-Unsubscribe` header or sender footer (opt-out is handled from replies). See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ---
 
@@ -69,7 +69,7 @@ Known gaps: the signal ingestion queue has no worker yet, and outbound email doe
 | [`gtm_schedule_outreach_sequence`](#gtm_schedule_outreach_sequence) | Schedules multi-channel cadences with human delays and daily quota enforcement | Sprint 5 |
 | [`gtm_track_campaign_metrics`](#gtm_track_campaign_metrics) | Aggregates real-time conversion rates (open, click, reply, positive reply, bounce) | Sprint 6 |
 | [`gtm_record_lead_interaction_feedback`](#gtm_record_lead_interaction_feedback) | Logs events, classifies sentiment, pauses sequences, and reinforces intent weights | Sprint 6 |
-| `gtm_build_lead_delivery` | Final delivery: only leads whose contact has 2 independent confirmations (live re-check + site/company record/identity) and verifiable facts; each with business dossier, sourced facts and grounded approach suggestions. Rejects listed with reasons | Verification gate |
+| `gtm_build_lead_delivery` | Final delivery: only leads whose contact has 2 independent confirmations (live re-check + site/company record/identity) and verifiable facts; each with business dossier, sourced facts and grounded approach suggestions. UK leads only pass as a live Ltd/LLP confirmed on Companies House (PECR: no cold messages to sole traders). Rejects listed with reasons | Verification gate |
 
 ---
 

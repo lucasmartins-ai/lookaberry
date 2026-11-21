@@ -224,8 +224,7 @@ flowchart TB
 | Fila | Worker | Status |
 | :--- | :--- | :--- |
 | `icp_analysis_queue` | `icpWorker` | ✅ Active (nada enfileira — consumo direto) |
-| `waterfall_enrichment_queue` | `enrichmentWorker` | ✅ Active |
-| `signal_ingestion_queue` | ❌ Nenhum | ⚠️ Queue criada, sem worker |
+| `waterfall_enrichment_queue` | `enrichmentWorker` | ⚠️ Worker ativo, nada enfileira (enrichment roda direto pelo MCP) |
 | `outreach_dispatcher_queue` | `dispatcherWorker` | ✅ Active (S5 dispatcher + S6 scheduler) |
 | `outreach_inbox_queue` | `inboxWorker` | ✅ Active (S6 inbox reader) |
 

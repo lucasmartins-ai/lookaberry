@@ -1,160 +1,71 @@
-# Status de Implementação — LookaBerry (S8)
+# Status de Implementação — LookaBerry
 
-> **Data**: 2026-08-23 · **Commit**: `48934bd` (S1–S6) + S7 (security) + S8 (email) · **Testes**: 264 unit tests pass
+> **Data**: 2026-11-21 · **Base**: `origin/main` `23e150a` + branch `feat/p2-gtm-wiring` · **Testes**: 730 passando (708 unit em 43 arquivos + 22 de integração em 7 arquivos), medido com `vitest run` contra Postgres 16/pgvector + Redis 7 locais · `tsc --noEmit` limpo.
+> O CI (`.github/workflows/ci.yml`) roda `tsc --noEmit` e só `vitest run tests/unit`; a integração precisa de Postgres + Redis.
 
-## Classificações usadas
+## Classificações
 
 | Status | Significado |
 | :--- | :--- |
-| **IMPLEMENTED** | Funciona de ponta a ponta e é testado (com ou sem credenciais). |
-| **PARTIALLY IMPLEMENTED** | Funciona em um modo (ex.: com chave de API) e degrada/é ruído sem ele. |
-| **MOCKED** | Existe apenas como simulação/fallback; não produz resultado real. |
-| **ADAPTER INTERFACE ONLY** | Existe contrato/interface, sem implementação concreta. |
-| **REQUIRES CREDENTIALS** | Implementado, mas inerte sem chave de API configurada. |
-| **REQUIRES BROWSER EXTENSION** | Depende da extensão Chrome Antigravity. |
-| **NOT IMPLEMENTED** | Não existe no código. |
+| **IMPLEMENTED** | Funciona de ponta a ponta e tem teste. |
+| **REQUIRES CREDENTIALS** | Implementado, inerte sem chave/conta configurada. |
+| **BETA** | Funciona, mas sem uso real suficiente para chamar de estável. |
+| **ORPHAN** | Existe, mas nada no código chama (ver seção 2). |
 
 ---
 
-## 1. Módulos Core
+## 1. Módulos core
 
 | Módulo | Arquivo | Status | Nota |
 | :--- | :--- | :--- | :--- |
-| ICP Profiler | `src/core/icp/*` | **IMPLEMENTED** | Scraper com 4 estratégias em cascata (LookaCrawler → nativo → Jina → cheerio). Análise LLM real com chave; fallback heurístico sem chave. |
-| Embeddings (1536-dim) | `src/core/icp/embeddings.ts` | **PARTIALLY IMPLEMENTED** | Com `OPENAI_API_KEY`: real (`text-embedding-3-small`). Sem chave: `generateDeterministicEmbedding` (SHA-256 → pseudo-aleatório). |
-| Intent Signal (providers) | `src/core/intent/providers/*` | **IMPLEMENTED** | Providers: websiteChanges, hiring, publicAnnouncements, credentialedFunding (fronteira). Normalização, TTL, confiança, classificação, dedup. |
-| Hybrid Scoring | `src/core/intent/scoring.ts` | **IMPLEMENTED** | Score determinístico por recência/TTL, confiança, qualidade, tipo, classificação. Sem LLM. |
-| Decision Engine (S3) | `src/core/decision/*` | **IMPLEMENTED** | Pipeline: signal 40% + evidence 25% + ICP 20% + seniority 15%. 31 testes unitários. |
-| Entity & Evidence Graph (S1) | `src/core/evidence/*` | **IMPLEMENTED** | Source, Person, Identity, CompanyEvidence, PersonEvidence, Observation, Relationship, Interaction. Sanitização + hash. |
-| Channel Abstraction (S4) | `src/core/channels/*` | **IMPLEMENTED** | ChannelId, ChannelCapability, ChannelProfile, ChannelRegistry. Migration aditiva. 16 testes. |
-| Execution Protocol (S5) | `src/core/execution/` | **IMPLEMENTED** | LinkedInAdapter via Antigravity. ExecutionRouter. Dispatcher worker. 42 testes. |
-| **Sequence Scheduler (S6)** | `src/core/execution/scheduler.ts` | **IMPLEMENTED** | Polling 60s, enfileira sequências due, graceful degradation. 8 testes. |
-| **Inbox Worker (S6)** | `src/core/execution/inboxWorker.ts` | **IMPLEMENTED** | Worker BullMQ, classifySentiment(), processReply(). 20 testes. |
-| **Feedback Loop (S6)** | `src/core/execution/feedbackLoop.ts` | **IMPLEMENTED** | Delivery verification 24h delay, weight adjustment ±5. 14 testes. |
-| Waterfall Enrichment | `src/core/enrichment/service.ts` | **IMPLEMENTED** | Cache → Apollo → Dropcontact → MX/ZeroBounce. REQUIRES CREDENTIALS para Apollo/Dropcontact. |
-| Hyper-Personalization | `src/core/personalization/service.ts` | **IMPLEMENTED** | Anthropic + prompt caching + guardrails. REQUIRES CREDENTIALS (Anthropic). |
-| Outreach scheduling | `src/core/outreach/service.ts` | **IMPLEMENTED** | scheduleSequence persiste e enfileira step 0. AntiBan + delay gaussiano + advanceSequenceState. |
-| Analytics / Feedback | `src/core/analytics/service.ts` | **IMPLEMENTED** | Métricas diárias, classificação Haiku, ajuste ±5, pausa em reply, revisão humana <85%. |
+| ICP Profiler | `src/core/icp/*` | **IMPLEMENTED** | Scraper em cascata (LookaCrawler → nativo → Jina → cheerio). `LLM_MODE=agent` (padrão) devolve o brief para o agente; `server` usa Anthropic ou endpoint OpenAI-compatível. |
+| Embeddings | `src/core/icp/embeddings.ts` | **IMPLEMENTED** | Padrão `lexical-v2` (mapa de conceitos pt/en, sem chave). Endpoint OpenAI-compatível ou OpenAI opcional. |
+| Intent signals | `src/core/intent/*` | **IMPLEMENTED** | Providers website, hiring, anúncios públicos, funding com credencial, CUSTOMER_LOSS (reviews de negócios locais). |
+| Scoring / Decision Engine | `src/core/intent/scoring.ts`, `src/core/decision/*` | **IMPLEMENTED** | Determinístico, 0 tokens. |
+| Evidence graph | `src/core/evidence/*` | **IMPLEMENTED** | Source, Person, Identity, evidências com TTL/confiança/hash. |
+| Waterfall enrichment | `src/core/enrichment/service.ts` | **REQUIRES CREDENTIALS** | Cache → Apollo → Dropcontact → MX/ZeroBounce. Só roda via MCP `gtm_waterfall_enrich_lead`; nada no código enfileira na `waterfall_enrichment_queue` (seção 2). |
+| Lead delivery (gate de verificação) | `src/core/delivery/*`, `src/core/verification/*` | **IMPLEMENTED** | Contato com 2 confirmações independentes, dossiê do site, fatos com fonte, abordagens com anti-slop. |
+| UK PECR | `src/core/verification/companiesHouse.ts` | **IMPLEMENTED** | Dentro de `gtm_build_lead_delivery`: lead UK (país, domínio `.uk`, telefone +44 ou localização) só passa se a empresa for Ltd/PLC/LLP ativa e confirmada na Companies House (número no site com nome compatível, ou nome exato + mesmo distrito postal). Sole trader, homônima, outro tipo, dissolvida ou consulta fora do ar → `rejected` com `pecr.status` e `pecr.reason`. Consulta sem chave no site público (~1,6 req/s). |
+| Personalização | `src/core/personalization/*` | **IMPLEMENTED** | Guardrails + anti-slop. Gera rascunho no modo agent; no servidor precisa de LLM configurado. |
+| Outreach / cadências | `src/core/outreach/*`, `src/core/execution/*` | **IMPLEMENTED** | Scheduler de 60 s, dispatcher, branching, A/B, smart scheduling, cadence governor, DLQ, idempotência, locking. |
+| Analytics / aprendizado | `src/core/analytics/*`, `src/core/learning/*` | **IMPLEMENTED** | Métricas, eventos em `POST /api/v1/events`, centroides lookalike de hora em hora. |
+| Segurança e governança | `src/core/security/*` | **IMPLEMENTED** | API keys com papéis, rate limit, assinatura de webhooks, filtro de IP, TOTP, supressão, retenção/anonimização, guarda de SSRF. |
 
----
+## 2. Filas e workers (BullMQ)
 
-## 2. Filas e Workers (BullMQ)
-
-| Fila | Definição | Worker | Status |
+| Fila | Produtor | Worker | Status |
 | :--- | :--- | :--- | :--- |
-| `icp_analysis_queue` | ✅ | ✅ `icpWorker` | **ACTIVE** (consumo direto, sem enfileiramento automático) |
-| `waterfall_enrichment_queue` | ✅ (attempts 3, backoff exp) | ✅ `enrichmentWorker` | **ACTIVE** |
-| `signal_ingestion_queue` | ✅ | ❌ | **QUEUE MORTA** (sem worker) |
-| `outreach_dispatcher_queue` | ✅ | ✅ `dispatcherWorker` | **ACTIVE** (S5 dispatcher + S6 scheduler enfileira) |
-| `outreach_inbox_queue` | ✅ | ✅ `inboxWorker` | **ACTIVE** (S6 inbox reader) |
+| `outreach_dispatcher_queue` | outreach service, scheduler, scheduleWorker, feedbackLoop | `dispatcher` | **IMPLEMENTED** |
+| `icp_analysis_queue` | nenhum | `icpWorker` | **ORPHAN** (a análise roda direto pela API/MCP) |
+| `waterfall_enrichment_queue` | nenhum | `enrichmentWorker` | **ORPHAN** (o enrichment roda direto pelo MCP) |
+| `outreach_inbox_queue` | nenhum | `inboxWorker` | **ORPHAN** (o worker sobe no boot, mas nada agenda leitura do inbox) |
+| ~~`signal_ingestion_queue`~~ | — | — | Removida em 2026-11-21: não tinha produtor nem worker. |
 
----
+`tests/unit/queues-no-orphans.test.ts` falha se surgir fila nova sem produtor; as três órfãs acima estão listadas lá como dívida conhecida.
 
-## 3. Execução de Canais
+## 3. Canais
 
 | Canal | Status | Detalhe |
 | :--- | :--- | :--- |
-| LinkedIn (connect/message/search/read) | **IMPLEMENTED** | `LinkedInAdapter` via extensão Antigravity (bridge 127.0.0.1:8765). Health check, retry, classificação de erros. |
-| Email (Resend / SMTP) | **IMPLEMENTED** | `EmailAdapter` real (S8): Resend API + nodemailer SMTP, template rendering `{{var}}`, pixel/click tracking, webhook Svix, bounce handling, verifyDelivery. `EMAIL_PROVIDER=none` mantém stub (backward compat). |
-| WhatsApp | **NOT IMPLEMENTED** | Stub adapter retorna `NOT_IMPLEMENTED`. Sprint 9 planejada. |
-| Manual tasks | **IMPLEMENTED** | `ManualAdapter` retorna sucesso para `followUp`. |
+| Email (Resend / SMTP) | **IMPLEMENTED** | Tracking, webhooks, bounce. Ainda sem header `List-Unsubscribe` nem rodapé do remetente (o opt-out é tratado pelas respostas). |
+| WhatsApp (Cloud API) | **BETA** · **REQUIRES CREDENTIALS** | `src/core/execution/adapters/whatsapp.ts`, MCP `gtm_send_whatsapp`, webhook próprio. |
+| LinkedIn | **IMPLEMENTED** | Via bridge da extensão Antigravity (`127.0.0.1:8765`). |
+| Manual | **IMPLEMENTED** | `ManualAdapter`. |
 
----
-
-## 4. Loop Autônomo (S6)
-
-| Componente | Status | Detalhe |
-| :--- | :--- | :--- |
-| Sequence Scheduler | ✅ **IMPLEMENTED** | `src/core/execution/scheduler.ts` — polling 60s, enfileira sequências due, graceful degrad |
-| Dispatcher (S6 fix) | ✅ **IMPLEMENTED** | `src/core/execution/dispatcher.ts` — processa 1 step/job, nextRunAt = NOW + delayHours |
-| Inbox Worker | ✅ **IMPLEMENTED** | `src/core/execution/inboxWorker.ts` — classifica sentimento, processa replies |
-| Feedback Loop | ✅ **IMPLEMENTED** | `src/core/execution/feedbackLoop.ts` — delivery verification 24h, weight ±5 |
-| Bootstrap Integration | ✅ **IMPLEMENTED** | `src/index.ts` — scheduler.start(), inbox worker, graceful shutdown |
-
----
-
-## 5. Interfaces (API, MCP, Webhooks)
+## 4. Interfaces
 
 | Item | Status | Nota |
 | :--- | :--- | :--- |
-| MCP server (stdio) | **IMPLEMENTED** | `lookaberry-mcp` bin; 9 tools registradas. |
-| MCP server (SSE) | **IMPLEMENTED** | `/sse` + `/messages` via Fastify. |
-| Tools MCP (9) | **IMPLEMENTED** | ICP, intent, score, evaluate, enrich, personalize, schedule, metrics, feedback. |
-| REST API | **PARTIALLY IMPLEMENTED** | `/health`, `/api/v1/icp/*`, `/sse`, `/messages`, `/api/v1/webhooks/outreach`. Swagger `/docs`. **Sem auth.** |
-| Webhook de outreach | **PARTIALLY IMPLEMENTED** | Contrato normalizado funcional. **Sem validação de assinatura**, sem idempotência. |
-| Autenticação / API keys | **NOT IMPLEMENTED** | Sprint 7 planejada. |
-| Swagger/OpenAPI | **IMPLEMENTED** | `/docs` com schema dos endpoints registrados. |
+| MCP (stdio + SSE) | **IMPLEMENTED** | 12 tools: `gtm_analyze_icp`, `gtm_detect_intent_signals`, `gtm_score_and_rank_leads`, `gtm_evaluate_opportunity`, `gtm_waterfall_enrich_lead`, `gtm_build_lead_delivery`, `gtm_generate_hyper_personalized_message`, `gtm_schedule_outreach_sequence`, `gtm_send_whatsapp`, `gtm_track_campaign_metrics`, `gtm_record_lead_interaction_feedback`, `gtm_insights`. |
+| REST API | **IMPLEMENTED** | ICP, campanhas, admin, eventos, insights, health, webhooks (outreach, email, WhatsApp), tracking de email. Auth por API key. Swagger em `/docs`. |
+| Dashboard de operação | **BETA** | `dashboard/` (Next.js). |
 
----
-
-## 6. Persistência (Prisma/PostgreSQL/pgvector)
-
-| Modelo | Status | Nota |
-| :--- | :--- | :--- |
-| `IcpProfile`, `IcpPersona`, `Company`, `Lead` | **IMPLEMENTED** | Modelos centrais. |
-| `IntentSignal` | **IMPLEMENTED** | Provider, URL, TTL, confiança, qualidade, custo, classificação, hash, dedup. |
-| `EnrichmentLog` | **IMPLEMENTED** | Auditoria de provedor, custo, status. |
-| `Campaign`, `SequenceStep`, `OutreachSequence`, `OutreachAccount`, `OutreachMessage` | **IMPLEMENTED** | Cadência completa com channel_id (S4 migration). |
-| `CampaignMetric`, `LeadInteractionFeedback` | **IMPLEMENTED** | Analytics loop funcional. |
-| `Source`, `Person`, `Identity` | **IMPLEMENTED** | Entidades S1 de proveniência. |
-| `CompanyEvidence`, `PersonEvidence` | **IMPLEMENTED** | Evidências com classificação, TTL, confiança, hash. |
-| `Observation`, `Relationship`, `Interaction` | **IMPLEMENTED** | Base relacional completa S1. |
-
----
-
-## 7. Testes
-
-| Tipo | Arquivos | Testes | Status |
-| :--- | :--- | :---: | :---: |
-| Unit — analytics | `tests/unit/analytics.test.ts` | 3 | ✅ |
-| Unit — analyzer | `tests/unit/analyzer.test.ts` | 1 | ✅ |
-| Unit — channels (S4) | `tests/unit/channels.test.ts` | 16 | ✅ |
-| Unit — decision (S3) | `tests/unit/decision.test.ts` | 31 | ✅ |
-| Unit — embeddings | `tests/unit/embeddings.test.ts` | 2 | ✅ |
-| Unit — evidence (S1) | `tests/unit/evidence.test.ts` | 4 | ✅ |
-| Unit — execution (S5) | `tests/unit/execution.test.ts` | 42 | ✅ |
-| Unit — intent | `tests/unit/intent.test.ts` | 2 | ✅ |
-| Unit — intent contract | `tests/unit/intent-contract.test.ts` | 4 | ✅ |
-| Unit — intent providers (S2) | `tests/unit/intent-providers.test.ts` | 6 | ✅ |
-| Unit — intent scoring | `tests/unit/intent-scoring.test.ts` | 4 | ✅ |
-| Unit — outreach | `tests/unit/outreach.test.ts` | 8 | ✅ |
-| Unit — personalization | `tests/unit/personalization.test.ts` | 3 | ✅ |
-| Unit — scraper | `tests/unit/scraper.test.ts` | 1 | ✅ |
-| Unit — waterfall | `tests/unit/waterfall.test.ts` | 3 | ✅ |
-| **Unit — S6 autonomous loop** | `tests/unit/s6-autonomous-loop.test.ts` | **42** | ✅ |
-| **Unit — S7 security** | `tests/unit/s7-security.test.ts` | **45** | ✅ |
-| **Unit — S8 email** | `tests/unit/s8-email.test.ts` | **45** | ✅ |
-| **TOTAL UNIT** | **18 files** | **264** | ✅ |
-| Integration — API | `tests/integration/api.test.ts` | 2 | ⚠️ (requer PG) |
-| Integration — DB | `tests/integration/db.test.ts` | 2 | ⚠️ (requer PG) |
-| Integration — Evidence | `tests/integration/evidence.test.ts` | 1 | ⚠️ (requer PG) |
-| Integration — MCP | `tests/integration/mcp.test.ts` | 2 | ⚠️ (requer PG) |
-| Smoke — MCP client | `tests/mcp-client-smoke.ts` | manual | run:npx |
-| Beta — Full E2E | `tests/beta-test-account.ts` | manual | run:npx |
-
----
-
-## 8. Próximos Passos
-
-| Prioridade | Sprint | Descrição |
-| :---: | :--- | :--- |
-| 🔴 | S7 | Auth, Rate Limiting & Security Hardening |
-| ✅ | S8 | Email Execution (Resend/SMTP) — concluído |
-| 🟡 | S9 | WhatsApp Execution & Multi-Account LinkedIn |
-| 🟢 | S10 | Ops Dashboard & Real-Time Monitoring |
-
----
-
-## 9. Dívida Técnica Conhecida
+## 5. Dívida conhecida
 
 | Item | Severidade | Nota |
 | :--- | :---: | :--- |
-| Sem autenticação na API | 🔴 Critical | API e webhooks totalmente abertos. Sprint 7. |
-| Sem validação de assinatura em webhooks | 🔴 Critical | Webhooks podem ser forjados. Sprint 7. |
-| Sem idempotência em webhooks | 🟡 High | Eventos duplicados podem distorcer métricas. Sprint 7. |
-| Embeddings sem API key são ruído | 🟡 High | Fallback SHA-256 não tem similaridade semântica. |
-| SMTP bounce detection via RET | 🟢 Medium | SMTP sem tracking nativo — bounces só via RET/relay webhooks (SendGrid/Mailgun via `X-Provider`). |
-| WhatsAppAdapter stub | 🟡 High | Sem envio real de WhatsApp. Sprint 9. |
-| `signal_ingestion_queue` sem worker | 🟢 Medium | Fila criada, nada consome. |
-| Inbox reader usa heurística keyword | 🟢 Medium | Classificação sem Haiku (offline). OK para protótipo. |
-| Inbox reader não acessa dados brutos do inbox | 🟢 Medium | ExecutionResult não carrega mensagens. Requer refactor do adapter. |
+| Três filas órfãs (seção 2) | 🟢 Medium | Os workers sobem no boot sem produtor. Ligar um produtor ou remover. |
+| `prisma migrate deploy` falha num banco vazio | 🟡 High | `10_outreach_events` usa `suppression_type_enum`, que nenhuma migration cria, e as pastas `10_`/`11_` ordenam antes de `1_` (medido em 2026-11-21). Banco novo hoje só sobe com `prisma db push`. |
+| Email sem `List-Unsubscribe` | 🟡 High | Necessário para envio frio em volume. |
+| Companies House por scraping do site público | 🟢 Medium | Sem chave, ~1,6 req/s global. Se o HTML mudar, a consulta vira `UNAVAILABLE` e o lead UK é excluído (falha fechada). A API oficial com chave elimina isso. |
+| Inbox reader com heurística por palavra-chave | 🟢 Medium | Sem classificador de modelo. |

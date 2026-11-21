@@ -8,7 +8,6 @@ export const redisConnection = new Redis(config.REDIS_URL, {
 });
 
 export const icpQueue = new Queue('icp_analysis_queue', { connection: redisConnection });
-export const signalQueue = new Queue('signal_ingestion_queue', { connection: redisConnection });
 export const enrichmentQueue = new Queue('waterfall_enrichment_queue', {
   connection: redisConnection,
   defaultJobOptions: {
@@ -24,7 +23,6 @@ export const outreachInboxQueue = new Queue('outreach_inbox_queue', { connection
 export async function closeQueues() {
   await Promise.all([
     icpQueue.close(),
-    signalQueue.close(),
     enrichmentQueue.close(),
     outreachQueue.close(),
     outreachInboxQueue.close(),
