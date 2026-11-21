@@ -13,7 +13,7 @@ const LeadDeliveryInputSchema = z.object({
 export function registerDeliveryTool(server: McpServer) {
   server.tool(
     'gtm_build_lead_delivery',
-    'Entrega final de leads: só passa quem tem contato com dupla confirmação (verificação agora + site/ficha/identidade) e fatos verificáveis. Cada lead vem com dossiê do negócio, fatos com fonte e sugestões de abordagem; os reprovados voltam em rejected com o motivo.',
+    'Entrega final de leads: só passa quem tem contato com dupla confirmação (verificação agora + site/ficha/identidade) e fatos verificáveis. Lead do Reino Unido só passa como Ltd/LLP ativa confirmada na Companies House (PECR: nada de mensagem fria para sole trader); os excluídos por isso trazem pecr.status. Cada lead vem com dossiê do negócio, fatos com fonte e sugestões de abordagem; os reprovados voltam em rejected com o motivo.',
     LeadDeliveryInputSchema.shape,
     async args => {
       try {

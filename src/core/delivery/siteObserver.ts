@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { assertPublicUrl, safeHttpOptions } from '../security/ssrf.js';
 import { extractContacts } from '../verification/contactCheck.js';
+import { companyNumbersIn, postcodeDistrictsIn } from '../verification/companiesHouse.js';
 
 /** What we saw on the company's own site, right now. Every field is an observed FACT, never inferred by an LLM. */
 export interface SiteObservation {
@@ -20,6 +21,10 @@ export interface SiteObservation {
   socials: string[];
   emails: string[];
   phones: string[];
+  /** UK company numbers printed next to a registration keyword (footer/legal text). */
+  company_numbers: string[];
+  /** UK postcode districts in the page text ("BS8"). */
+  postcode_districts: string[];
 }
 
 const PLATFORMS: Array<[RegExp, string]> = [
@@ -36,6 +41,7 @@ export function observeHtml(raw: string, url: string): SiteObservation {
   const links = $('a[href]').map((_, a) => $(a).attr('href') ?? '').get().join(' ');
   const all = `${html} ${links}`;
   const contacts = extractContacts(all);
+  const text = cheerio.load(html)('body').find('script,style,noscript').remove().end().text().replace(/\s+/g, ' ');
   return {
     url,
     observed_at: new Date().toISOString(),
@@ -52,6 +58,8 @@ export function observeHtml(raw: string, url: string): SiteObservation {
     socials: [...new Set((links.match(/https?:\/\/(?:www\.)?(?:instagram|facebook|linkedin|tiktok|youtube)\.com\/[^\s"'?#]+/gi) ?? []).map(s => s.toLowerCase()))].slice(0, 6),
     emails: contacts.emails,
     phones: contacts.phones,
+    company_numbers: companyNumbersIn(text),
+    postcode_districts: postcodeDistrictsIn(text),
   };
 }
 
@@ -72,9 +80,11 @@ export async function observeSite(domain: string): Promise<SiteObservation | nul
       try {
         const contactUrl = new URL(contactHref, base);
         if (contactUrl.hostname === new URL(base).hostname) {
-          const extra = extractContacts(await get(contactUrl.toString()));
+          const extra = observeHtml(await get(contactUrl.toString()), contactUrl.toString());
           home.emails = [...new Set([...home.emails, ...extra.emails])];
           home.phones = [...new Set([...home.phones, ...extra.phones])];
+          home.company_numbers = [...new Set([...home.company_numbers, ...extra.company_numbers])];
+          home.postcode_districts = [...new Set([...home.postcode_districts, ...extra.postcode_districts])];
         }
       } catch { /* contact page is optional */ }
     }

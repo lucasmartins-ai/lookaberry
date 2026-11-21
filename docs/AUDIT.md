@@ -83,7 +83,7 @@ Git: 3 commits; `.gitignore` modificado (não commitado) adicionando artefatos p
 | Camada "Auth — API Key & Rate Limiter (Token Bucket)" no diagrama | **Não existe** auth nem rate limit em lugar nenhum | **Alta** |
 | "LinkedIn Execution (Unipile / Isolated Headless Puppeteer)" | Nenhum código de execução; só agendamento | **Alta** |
 | "Email Execution (Smartlead / Instantly / Resend)" | **Não existe**; nenhum envio | **Alta** |
-| Filas `Q_Signal`, `Q_Outreach`, `Q_Sync` (webhook/CRM sync) | `signalQueue` e `outreachQueue` criadas mas **nunca usadas**; sem fila de sync | **Alta** |
+| Filas `Q_Signal`, `Q_Outreach`, `Q_Sync` (webhook/CRM sync) | `signalQueue` e `outreachQueue` criadas mas **nunca usadas**; sem fila de sync (2026-11-21: `outreachQueue` hoje é usada; `signalQueue` foi removida) | **Alta** |
 | "Catálogo estrito de 8 tools" | ✅ correto (8 registradas) | — |
 | Waterfall: cache → Apollo → Dropcontact → MX/ZeroBounce | ✅ implementado (Apollo/Dropcontact no-op sem chave; ZeroBounce só com chave) | — |
 
@@ -160,7 +160,7 @@ Git: 3 commits; `.gitignore` modificado (não commitado) adicionando artefatos p
 - Sem modelo de conversa/thread: replies viram eventos isolados em `lead_interaction_feedback`.
 
 ### 5.2 Código
-- `signalQueue` e `outreachQueue` declaradas e **nunca usadas** (sem produtor/consumidor).
+- `signalQueue` e `outreachQueue` declaradas e **nunca usadas** (sem produtor/consumidor). Atualização 2026-11-21: `signalQueue` removida; `outreachQueue` em uso.
 - `FIRECRAWL_API_KEY` declarada em `env.ts` e nunca lida.
 - Dependências não utilizadas: `pg`, `zod-to-json-schema` (e types relacionados).
 - `analyzer.ts` hardcoda `'claude-3-5-haiku-latest'` em vez de `config.ANTHROPIC_MODEL` (inconsistente com personalization).
@@ -202,7 +202,7 @@ Git: 3 commits; `.gitignore` modificado (não commitado) adicionando artefatos p
 
 | Item | Onde | Status |
 | :--- | :--- | :--- |
-| `signalQueue` / `outreachQueue` | `src/core/queues/queue.ts` | Nunca usadas |
+| `signalQueue` / `outreachQueue` | `src/core/queues/queue.ts` | `signalQueue` removida (2026-11-21); `outreachQueue` em uso |
 | `FIRECRAWL_API_KEY` | `src/config/env.ts` | Nunca lida |
 | `pg`, `zod-to-json-schema` | `package.json` | Nunca importados |
 | Rota `/api/v1/webhooks/outreach` | `src/api/routes/webhooks.ts` | Existe, mas nenhum provedor real a invoca |

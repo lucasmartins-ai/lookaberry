@@ -4,7 +4,6 @@ import { redisConnection } from '../../core/queues/queue.js';
 import { getCadenceGovernor } from '../../core/execution/cadenceGovernor.js';
 import {
   icpQueue,
-  signalQueue,
   enrichmentQueue,
   outreachQueue,
   outreachInboxQueue,
@@ -106,7 +105,6 @@ async function checkQueues(): Promise<HealthComponent & { queues?: QueueInfo[] }
 
   const queueList = [
     { name: 'icp_analysis_queue', q: icpQueue },
-    { name: 'signal_ingestion_queue', q: signalQueue },
     { name: 'waterfall_enrichment_queue', q: enrichmentQueue },
     { name: 'outreach_dispatcher_queue', q: outreachQueue },
     { name: 'outreach_inbox_queue', q: outreachInboxQueue },
